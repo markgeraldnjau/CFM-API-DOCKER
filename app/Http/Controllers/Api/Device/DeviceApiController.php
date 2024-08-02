@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api\Device;
 
+use App\Encryption\AsymmetricEncryption;
+use App\Encryption\EncryptionHelper;
 use App\Events\SendMail;
 use App\Events\SendSms;
 use App\Http\Controllers\Controller;
@@ -11,9 +13,8 @@ use App\Models\DeviceApi;
 use App\Models\Operator;
 use App\Models\Transaction\TicketTransaction;
 use App\Traits\CustomerTrait;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Log;
-use DB;
 use Illuminate\Http\Request;
 use App\Traits\ApprovalTrait;
 use App\Traits\ApiResponse;
@@ -306,7 +307,8 @@ class DeviceApiController extends Controller
         $majibu->success = "Successfully";
         $majibu->code = 200;
         FacadesLog::info(["Majibu" =>$majibu]);
-        $res = $this->encrypt(json_encode($majibu), $privateKey);
+//        $res = $this->encrypt(json_encode($majibu), $privateKey);
+        $res = EncryptionHelper::encrypt(json_encode($majibu), $privateKey);
         FacadesLog::info(["EncryptedData" =>$res]);
 
 
@@ -984,10 +986,28 @@ class DeviceApiController extends Controller
         //TODO all the below logic will be implemented by Filbert,
         // TODO for now we test the encryption and decryption of each payload received
         validator([
-            'data' => 'reuired'
+            'data' => 'required'
         ]);
+        FacadesLog::info(["data" =>$request->data]);
         $this->logger->log($request->data);
-        $decodedJson = $this->decrypt($request->data);
+        $headers = getallheaders();
+        $encryptedByteAndroidId = $headers['Android-Id'] ?? null;
+        FacadesLog::info(["encryptedByteAndroidId" =>$encryptedByteAndroidId]);
+
+        if (!$encryptedByteAndroidId){
+            return response()->json(['error'=>"AndroidId Not Provided"]);
+        }
+        //add logic ro decrypt
+        $decryptedAByteAndroidId = AsymmetricEncryption::decryptAsymmetric($encryptedByteAndroidId);
+        FacadesLog::info(["decryptedAByteAndroidId" =>$decryptedAByteAndroidId]);
+        //convert the byte to string
+        $androidId = utf8_decode($decryptedAByteAndroidId);
+        FacadesLog::info(["androidId" =>$androidId]);
+
+
+        $keys  =  DB::table('keys')->where(['android_id'=>$androidId])->first();
+        $pwKey = $keys->key;
+        $decodedJson = EncryptionHelper::decrypt($request->data,$pwKey);
         FacadesLog::info(["DecodedJosn" =>$decodedJson]);
         $outerArray = json_decode($decodedJson);
         $privateKey = $outerArray->key;
@@ -997,6 +1017,8 @@ class DeviceApiController extends Controller
         FacadesLog::info(["Majibu" =>$majibu]);
         $res = $this->encrypt(json_encode($majibu), $privateKey);
         FacadesLog::info(["EncryptedData" =>$res]);
+
+        //update operator device id
 
 
 

@@ -39,8 +39,11 @@ Route::post('otp_verification', '\App\Http\Controllers\Api\Device\DeviceApiContr
 
 Route::get('automotora_prices', '\App\Http\Controllers\Api\Device\DeviceApiController@automotora_prices');
 
-Route::get('normal_prices', '\App\Http\Controllers\Api\Device\DeviceApiController@normal_prices');
+Route::group(['middleware'=>'auth:operator','encryption'],function (){
 
+    Route::get('normal_prices', '\App\Http\Controllers\Api\Device\DeviceApiController@normal_prices');
+
+});
 
 Route::post('operator_login', '\App\Http\Controllers\Api\Device\DeviceApiController@operator_login');
 
