@@ -988,7 +988,7 @@ class DeviceApiController extends Controller
         validator([
             'data' => 'required'
         ]);
-        FacadesLog::info(["data" =>$request->data]);
+       // FacadesLog::info(["data" =>$request->data]);
         $this->logger->log($request->data);
         $headers = getallheaders();
         $encryptedByteAndroidId = $headers['Android-Id'] ?? null;
