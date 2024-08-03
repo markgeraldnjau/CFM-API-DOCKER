@@ -12,7 +12,7 @@ use Illuminate\Support\Str;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
 
-class Operator extends Model implements JWTSubject
+class Operator extends Authenticatable implements JWTSubject
 {
     use HasFactory, SoftDeletes;
     protected $table = 'operators';

@@ -25,7 +25,11 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB as FacadesDB;
 use Illuminate\Support\Facades\Log as FacadesLog;
 use Illuminate\Support\Facades\Storage;
-use PHPOpenSourceSaver\JWTAuth\JWTAuth;
+
+use PHPOpenSourceSaver\JWTAuth\Facades\JWTAuth;
+use PHPOpenSourceSaver\JWTAuth\Exceptions\JWTException;
+
+
 
 class DeviceApiController extends Controller
 {
@@ -1015,7 +1019,10 @@ class DeviceApiController extends Controller
 //        FacadesLog::info(["outerArray" =>$outerArray]);
         $username = $outerArray->field_42;
         $password = $outerArray->field_52;
-        $deviceCode = $outerArray->code_number;
+        $deviceId = $outerArray->code_number;
+        $successResponse = (object) null;
+        $failedResponse = (object) null;
+        $dataPayload = (object) null;
 
         /**
          * End Of Decryption Login
@@ -1165,16 +1172,49 @@ class DeviceApiController extends Controller
 
 
         /**
+         * Incase of success login credentials
          * Start of JWT token and Encryption Logic
          */
-        $token = auth()->attempt(
-            [
-                'username'=>$username,
-                'password' =>$password,
-                'device_code' =>$deviceCode
-            ]
+
+        $token = $token = JWTAuth::attempt(
+            ['username'=>"joyce",
+                'password' => '$2y$12$DpWA9iWC2uhnq.p7cEU91Oy3F/Q.4QIU/V26yooz/7LJ.aSLF6nNu']
         );
-        return response()->json($this->msg);
+
+//        $token = auth()->attempt(
+//            ['username'=>$username, 'password' =>$password, 'device_code' =>$deviceId]
+//        );
+//
+//        $token = auth()->guard('operator')
+//            ->attempt(['username' => "joyce",
+//                'password' => '$2y$12$DpWA9iWC2uhnq.p7cEU91Oy3F/Q.4QIU/V26yooz/7LJ.aSLF6nNu',
+//                //'device_id' => 'd405fe5b9271fd91',
+//        ]);
+
+        $operator = Operator::where('username', 'gabriel')
+            ->where('device_id', 'd405fe5b9271fd91')
+            ->first();
+
+        FacadesLog::info('TOKEN',["T" =>$token]);
+        if(!empty($token)){
+            $successResponse->message = "Successfully Login";
+            $successResponse->status =  true;
+            $successResponse->response_code = 200;
+            $successResponse->token = $token;
+            $encryptedSuccess = EncryptionHelper::encrypt(json_encode($successResponse),$pwKey);
+            FacadesLog::info('Success',["encryptedResponse" =>$encryptedSuccess]);
+            return response()->json($encryptedSuccess);
+        }
+
+        /**
+         * this should also be implemented in the logic of failed credentials provided
+         */
+        $failedResponse->message = "Invalid Login Credentials";
+        $failedResponse->status =  false;
+        $failedResponse->response_code = 401;
+        $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse),$pwKey);
+        FacadesLog::info('Failure',["encryptedResponse" =>$encryptedFailure]);
+        return response()->json($encryptedFailure);
     }
 
     public function get_station_passing_lines()
