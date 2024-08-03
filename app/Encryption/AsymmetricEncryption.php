@@ -11,6 +11,7 @@ class AsymmetricEncryption
     public static function decryptAsymmetric($encryptedData): string
     {
         $privateKeyPath = storage_path('/app/keys/private.key');
+        Log::info("info",["privateKeyPath: " => $privateKeyPath]);
         $privateKey = openssl_pkey_get_private(file_get_contents($privateKeyPath));
         openssl_private_decrypt(base64_decode($encryptedData), $decryptedData, $privateKey);
         Log::info("error",["encryptedData: " => $decryptedData]);

@@ -25,6 +25,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB as FacadesDB;
 use Illuminate\Support\Facades\Log as FacadesLog;
 use Illuminate\Support\Facades\Storage;
+use PHPOpenSourceSaver\JWTAuth\JWTAuth;
 
 class DeviceApiController extends Controller
 {
@@ -255,7 +256,8 @@ class DeviceApiController extends Controller
         ]);
         //$this->logger->log($request->data);
         FacadesLog::info(["DATA" =>$request->data]);
-        $decodedJson = $this->decryptAsymmetric($request->data);
+//        $decodedJson = $this->decryptAsymmetric($request->data);
+        $decodedJson = AsymmetricEncryption::decryptAsymmetric($request->data);
         FacadesLog::info(["DecodedJosn" =>$decodedJson]);
         $outerArray = json_decode($decodedJson);
         $privateKey = $outerArray->key;
@@ -985,44 +987,45 @@ class DeviceApiController extends Controller
     public function login(Request $request){
         //TODO all the below logic will be implemented by Filbert,
         // TODO for now we test the encryption and decryption of each payload received
+        /**
+         * Decryption logic for the payload start here
+         */
         validator([
             'data' => 'required'
         ]);
-       // FacadesLog::info(["data" =>$request->data]);
-        $this->logger->log($request->data);
         $headers = getallheaders();
-        $encryptedByteAndroidId = $headers['Android-Id'] ?? null;
-        FacadesLog::info(["encryptedByteAndroidId" =>$encryptedByteAndroidId]);
-
-        if (!$encryptedByteAndroidId){
+        $stringEncryptedByteAndroidId = $headers['Encrypted-Android-Id'] ?? null;
+        $jsonEncryptedAndroidId = json_decode($stringEncryptedByteAndroidId);
+        FacadesLog::info("Payload",["data" => $request->data]);
+        FacadesLog::info("Header",["encryptedByteAndroidId" =>$jsonEncryptedAndroidId->data]);
+        if (!$jsonEncryptedAndroidId){
             return response()->json(['error'=>"AndroidId Not Provided"]);
         }
-        //add logic ro decrypt
-        $decryptedAByteAndroidId = AsymmetricEncryption::decryptAsymmetric($encryptedByteAndroidId);
-        FacadesLog::info(["decryptedAByteAndroidId" =>$decryptedAByteAndroidId]);
-        //convert the byte to string
-        $androidId = utf8_decode($decryptedAByteAndroidId);
-        FacadesLog::info(["androidId" =>$androidId]);
+        $decryptedAByteAndroidId = AsymmetricEncryption::decryptAsymmetric($jsonEncryptedAndroidId->data);
+        FacadesLog::info('AndroidId',["decryptedAByteAndroidId" =>$decryptedAByteAndroidId]);
 
-
-        $keys  =  DB::table('keys')->where(['android_id'=>$androidId])->first();
+        $keys  =  DB::table('keys')->where(['android_id'=>$decryptedAByteAndroidId])->first();
+        if(!$keys){
+             return response()->json(['error'=>"No Key Found"]);
+        }
         $pwKey = $keys->key;
-        $decodedJson = EncryptionHelper::decrypt($request->data,$pwKey);
-        FacadesLog::info(["DecodedJosn" =>$decodedJson]);
-        $outerArray = json_decode($decodedJson);
-        $privateKey = $outerArray->key;
-        $majibu = (object) null;
-        $majibu->success = "Successfully";
-        $majibu->code = 200;
-        FacadesLog::info(["Majibu" =>$majibu]);
-        $res = $this->encrypt(json_encode($majibu), $privateKey);
-        FacadesLog::info(["EncryptedData" =>$res]);
+        $decryptedJson = EncryptionHelper::decrypt($request->data,$pwKey);
+//        FacadesLog::info(["DecryptedJson" =>$decryptedJson]);
+        $outerArray = json_decode($decryptedJson);
+//        FacadesLog::info(["outerArray" =>$outerArray]);
+        $username = $outerArray->field_42;
+        $password = $outerArray->field_52;
+        $deviceCode = $outerArray->code_number;
 
-        //update operator device id
-
+        /**
+         * End Of Decryption Login
+         */
 
 
         /**
+         * Start of the logic of other logic
+         */
+
         $msg = null;
         $this->msg = $request; //Process Login Message
         $this->msg['MTI'] = "0630";
@@ -1159,7 +1162,18 @@ class DeviceApiController extends Controller
         }else{
         $this->msg['field_39'] = '55';
         }
-         **/
+
+
+        /**
+         * Start of JWT token and Encryption Logic
+         */
+        $token = auth()->attempt(
+            [
+                'username'=>$username,
+                'password' =>$password,
+                'device_code' =>$deviceCode
+            ]
+        );
         return response()->json($this->msg);
     }
 

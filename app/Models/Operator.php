@@ -9,9 +9,13 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
-class Operator extends Model
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
+
+class Operator extends Model implements JWTSubject
 {
     use HasFactory, SoftDeletes;
+    protected $table = 'operators';
 
     protected $guarded = [];
 
@@ -67,5 +71,15 @@ class Operator extends Model
     public function operatorAccount(): \Illuminate\Database\Eloquent\Relations\HasOne
     {
         return $this->hasOne(OperatorAccount::class, 'operator_id');
+    }
+
+    public function getJWTIdentifier()
+    {
+        return $this->getKey();
+    }
+
+    public function getJWTCustomClaims()
+    {
+        return [];
     }
 }
