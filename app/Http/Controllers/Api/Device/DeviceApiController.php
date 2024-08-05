@@ -318,7 +318,7 @@ class DeviceApiController extends Controller
         FacadesLog::info(["EncryptedData" =>$res]);
 
 
-        // TODO data was successfully decrypted up to this point
+        // data was successfully decrypted up to this point
         $last = (object) null;
         $last->data = $res;
 
@@ -1016,7 +1016,6 @@ class DeviceApiController extends Controller
         $decryptedJson = EncryptionHelper::decrypt($request->data,$pwKey);
 //        FacadesLog::info(["DecryptedJson" =>$decryptedJson]);
         $outerArray = json_decode($decryptedJson);
-//        FacadesLog::info(["outerArray" =>$outerArray]);
         $username = $outerArray->field_42;
         $password = $outerArray->field_52;
         $deviceId = $outerArray->code_number;
@@ -1033,13 +1032,14 @@ class DeviceApiController extends Controller
          * Start of the logic of other logic
          */
 
+
+
         $msg = null;
         $this->msg = $request; //Process Login Message
         $this->msg['MTI'] = "0630";
         $params = $this->get_app_parameters($this->msg['field_68'], $this->msg['field_69']);
 
         $agent_username = $this->msg['field_42'];
-        $password = $this->msg['field_52'];
         $code_number = $this->msg['code_number'];
 
         $sql = "SELECT  `o`.`password`,`o`.`full_name`,`o`.`train_line_id`,`o`.`operator_category_id`,`o`.`id`,`o`.`operator_Type_code`,
@@ -1171,29 +1171,16 @@ class DeviceApiController extends Controller
         }
 
 
+
         /**
          * Incase of success login credentials
          * Start of JWT token and Encryption Logic
          */
-
-        $token = $token = JWTAuth::attempt(
-            ['username'=>"joyce",
-                'password' => '$2y$12$DpWA9iWC2uhnq.p7cEU91Oy3F/Q.4QIU/V26yooz/7LJ.aSLF6nNu']
-        );
-
-//        $token = auth()->attempt(
-//            ['username'=>$username, 'password' =>$password, 'device_code' =>$deviceId]
-//        );
-//
-//        $token = auth()->guard('operator')
-//            ->attempt(['username' => "joyce",
-//                'password' => '$2y$12$DpWA9iWC2uhnq.p7cEU91Oy3F/Q.4QIU/V26yooz/7LJ.aSLF6nNu',
-//                //'device_id' => 'd405fe5b9271fd91',
-//        ]);
-
-        $operator = Operator::where('username', 'gabriel')
-            ->where('device_id', 'd405fe5b9271fd91')
-            ->first();
+        $token = auth()->guard('operator')->attempt([
+            'username' => $username,
+            'password' => $password
+        ]);
+        FacadesLog::info('credential',["username" =>$username, "password" => $password]);
 
         FacadesLog::info('TOKEN',["T" =>$token]);
         if(!empty($token)){
@@ -1203,7 +1190,8 @@ class DeviceApiController extends Controller
             $successResponse->token = $token;
             $encryptedSuccess = EncryptionHelper::encrypt(json_encode($successResponse),$pwKey);
             FacadesLog::info('Success',["encryptedResponse" =>$encryptedSuccess]);
-            return response()->json($encryptedSuccess);
+            $dataPayload->data = $encryptedSuccess;
+            return response()->json($dataPayload);
         }
 
         /**
@@ -1214,7 +1202,8 @@ class DeviceApiController extends Controller
         $failedResponse->response_code = 401;
         $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse),$pwKey);
         FacadesLog::info('Failure',["encryptedResponse" =>$encryptedFailure]);
-        return response()->json($encryptedFailure);
+        $dataPayload->data = $encryptedFailure;
+        return response()->json($dataPayload);
     }
 
     public function get_station_passing_lines()
