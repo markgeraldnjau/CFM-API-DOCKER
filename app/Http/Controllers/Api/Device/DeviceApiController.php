@@ -997,52 +997,55 @@ class DeviceApiController extends Controller
         validator([
             'data' => 'required'
         ]);
-        $headers = getallheaders();
-        $stringEncryptedByteAndroidId = $headers['Encrypted-Android-Id'] ?? null;
-        $jsonEncryptedAndroidId = json_decode($stringEncryptedByteAndroidId);
-        FacadesLog::info("Payload",["data" => $request->data]);
-        FacadesLog::info("Header",["encryptedByteAndroidId" =>$jsonEncryptedAndroidId->data]);
-        if (!$jsonEncryptedAndroidId){
-            return response()->json(['error'=>"AndroidId Not Provided"]);
-        }
-        $decryptedAByteAndroidId = AsymmetricEncryption::decryptAsymmetric($jsonEncryptedAndroidId->data);
-        FacadesLog::info('AndroidId',["decryptedAByteAndroidId" =>$decryptedAByteAndroidId]);
+        try {
+            $headers = getallheaders();
+            $stringEncryptedByteAndroidId = $headers['Encrypted-Android-Id'] ?? null;
+            $jsonEncryptedAndroidId = json_decode($stringEncryptedByteAndroidId);
+            FacadesLog::info("Payload", ["data" => $request->data]);
+            FacadesLog::info("Header", ["encryptedByteAndroidId" => $jsonEncryptedAndroidId->data]);
+            if (!$jsonEncryptedAndroidId) {
+                return response()->json(['error' => "AndroidId Not Provided"]);
+            }
+            $decryptedAByteAndroidId = AsymmetricEncryption::decryptAsymmetric($jsonEncryptedAndroidId->data);
+            FacadesLog::info('AndroidId', ["decryptedAByteAndroidId" => $decryptedAByteAndroidId]);
 
-        $keys  =  DB::table('keys')->where(['android_id'=>$decryptedAByteAndroidId])->first();
-        if(!$keys){
-             return response()->json(['error'=>"No Key Found"]);
-        }
-        $pwKey = $keys->key;
-        $decryptedJson = EncryptionHelper::decrypt($request->data,$pwKey);
-//        FacadesLog::info(["DecryptedJson" =>$decryptedJson]);
-        $outerArray = json_decode($decryptedJson);
-        $username = $outerArray->field_42;
-        $password = $outerArray->field_52;
-        $deviceId = $outerArray->code_number;
-        $successResponse = (object) null;
-        $failedResponse = (object) null;
-        $dataPayload = (object) null;
+            $keys = DB::table('keys')
+                ->select('key')
+                ->where(['android_id' => $decryptedAByteAndroidId])->first();
+            if (!$keys) {
+                return response()->json(['error' => "No Key Found"]);
+            }
+            $pwKey = $keys->key;
+            $decryptedJsonString = EncryptionHelper::decrypt($request->data, $pwKey);
+            $decodedJson = json_decode($decryptedJsonString);
+            FacadesLog::info(["DecryptedJson" => $decodedJson->MTI]);
+            $outerArray = $decodedJson;
+            $username = $outerArray->field_42;
+            $password = $outerArray->field_52;
+            $deviceId = $outerArray->code_number;
+            $successResponse = (object)null;
+            $failedResponse = (object)null;
+            $dataPayload = (object)null;
 
-        /**
-         * End Of Decryption Login
-         */
-
-
-        /**
-         * Start of the logic of other logic
-         */
-
+            /**
+             * End Of Decryption Login
+             */
 
 
-        $msg = null;
-        $this->msg = $request; //Process Login Message
-        $this->msg['MTI'] = "0630";
-        $params = $this->get_app_parameters($this->msg['field_68'], $this->msg['field_69']);
+            /**
+             * Start of the logic of other logic
+             */
 
-        $agent_username = $this->msg['field_42'];
-        $code_number = $this->msg['code_number'];
 
-        $sql = "SELECT  `o`.`password`,`o`.`full_name`,`o`.`train_line_id`,`o`.`operator_category_id`,`o`.`id`,`o`.`operator_Type_code`,
+            $msg = null;
+            $this->msg = (array) $decodedJson;
+            $this->msg['MTI'] = "0630";
+            $params = $this->get_app_parameters($this->msg['field_68'], $this->msg['field_69']);
+
+            $agent_username = $this->msg['field_42'];
+            $code_number = $this->msg['code_number'];
+
+            $sql = "SELECT  `o`.`password`,`o`.`full_name`,`o`.`train_line_id`,`o`.`operator_category_id`,`o`.`id`,`o`.`operator_Type_code`,
         IF(`a`.`train_ID_asc` IS NULL or `a`.`train_ID_asc` = '', '0', `a`.`train_ID_asc`) as `train_ID_asc` ,
         IF(`a`.`train_ID_dec` IS NULL or `a`.`train_ID_dec` = '', '0', `a`.`train_ID_dec`) as `train_ID_dec` ,
         `o`.`station_ID` as `station_ID`,
@@ -1051,159 +1054,169 @@ class DeviceApiController extends Controller
         FROM `operators` AS `o` LEFT JOIN `operator_allocations` AS a ON `o`.`operator_ID`=`a`.`operator_ID`
         WHERE `username`=:username";
 
-        $data = ['username' => $agent_username ];
-        $result = $this->db_select($sql,$data);
+            $data = ['username' => $agent_username];
+            $result = $this->db_select($sql, $data);
 
-        if(!empty($result)){
+            if (!empty($result)) {
+                if(count($params) > 0) {
+                    FacadesLog::info(["Password" => $result[0]->password]);
+                    if (($code_number != 'NOT SET') && ($code_number != $params[0]->device_last_token)) {
+                        $this->msg['field_39'] = '55';
+                    } else
+                        if (Hash::check($password, $result[0]->password)) {
+                            $this->msg['field_52'] = '****';
+                            $this->msg['otp'] = $this->generate_otp($result[0]->id, $this->msg['field_68']);
+                            if (isset($this->msg['version'])) {
+                                $this->update_device_version($params[0]->id, $this->msg['version'], $agent_username);
+                            }
+                            // Get Station List
+                            $this->msg['operator_category'] = $result[0]->operator_category_id; //1=conductor, 2=Inseptor, 3=CargoMaster
+                            $this->msg['operator_type'] = $result[0]->operator_Type_code; //1 Normal, 2, Zone, 3, Both
+                            $this->msg['stationId'] = $result[0]->station_ID; //station id
+                            $this->msg['operator_id'] = $result[0]->id;
+                            $this->msg['operator_full_name'] = $result[0]->full_name;
+                            $this->msg['type_zone'] = $result[0]->zone;
+                            $this->msg['type_normal'] = $result[0]->normal;
+                            $this->msg['type_changing_class'] = $result[0]->changing_class;
+                            $this->msg['type_automotora'] = $result[0]->automotora;
+                            $this->msg['type_top_up'] = $result[0]->top_up;
+                            $this->msg['type_registration'] = $result[0]->registration;
+                            $this->msg['type_scanning'] = $result[0]->scanning;
+                            //station List
+                            $this->get_station_list($result[0]->train_line_id);
+                            $this->get_zones_list();
+                            $this->get_operator_allocation($result[0]->id);
+                            $this->get_operator_allocation_seats($result[0]->id);
+                            // getCargoStationList
+                            // $this->getStationListForCargo($result['line_ID'], $params[2]);
+                            //Get Train Class
+                            $this->get_train_class();
+                            //Get Price Table
+                            $this->get_price_table();
+                            //Get Passenger Category
+                            $this->get_passenger_category();
+                            //Get Zone detail
+                            $this->get_zone_details();
+                            //}
 
+                            //Get Train Detail
+                            $this->get_train_details_new();
+                            // Get Train Station Schedule
+                            $this->get_train_schedule();
+                            // // Zonalprice
+                            $this->get_zone_price();
+                            //automototra stations
+                            $this->get_automotora_stations();
+                            //automototra price
+                            $this->get_automotora_price();
+                            //automotora trains
+                            $this->get_train_details_new_automotora();
 
-        $this->msg['password'] = $params[0]->device_last_token;
-        if(($code_number != 'NOT SET') && ($code_number !=  $params[0]->device_last_token)){
-        $this->msg['field_39'] = '55';
-        }
-        else
-        if ($password !== $result[0]->password) {
-        $this->msg['field_39'] = '75';
-        } else {
+                            $this->get_exchange_rate();
+                            $this->get_lagguage_sub_categories();
 
-        $this->msg['field_52'] = '****';
-        $this->msg['otp'] = $this->generate_otp($result[0]->id,$this->msg['field_68']);
-        if (isset($this->msg['version'])) {
-        $this->update_device_version($params[0]->id, $this->msg['version'],$agent_username);
-        }
-        // Get Station List
-        $this->msg['operator_category'] = $result[0]->operator_category_id; //1=conductor, 2=Inseptor, 3=CargoMaster
-        $this->msg['operator_type'] = $result[0]->operator_Type_code; //1 Normal, 2, Zone, 3, Both
-        $this->msg['stationId'] = $result[0]->station_ID; //station id
-        $this->msg['operator_id'] = $result[0]->id;
-        $this->msg['operator_full_name'] = $result[0]->full_name;
-        $this->msg['type_zone'] = $result[0]->zone;
-        $this->msg['type_normal'] = $result[0]->normal;
-        $this->msg['type_changing_class'] = $result[0]->changing_class;
-        $this->msg['type_automotora'] = $result[0]->automotora;
-        $this->msg['type_top_up'] = $result[0]->top_up;
-        $this->msg['type_registration'] = $result[0]->registration;
-        $this->msg['type_scanning'] = $result[0]->scanning;
-        //station List
-        $this->get_station_list($result[0]->train_line_id);
-        $this->get_zones_list();
-        $this->get_operator_allocation($result[0]->id);
-        $this->get_operator_allocation_seats($result[0]->id);
-        // getCargoStationList
-        // $this->getStationListForCargo($result['line_ID'], $params[2]);
-        //Get Train Class
-        $this->get_train_class();
-        //Get Price Table
-        $this->get_price_table();
-        //Get Passenger Category
-        $this->get_passenger_category();
-        //Get Zone detail
-        $this->get_zone_details();
-        //}
+                            // // //card informations
+                            // // //Author Filbert
+                            $this->getCustomersCardAccountsInformations();
+                            $this->msg['field_128'] = '1234567890';
+                            $this->msg['field_39'] = '00';
 
-        //Get Train Detail
-        $this->get_train_details_new();
-        // Get Train Station Schedule
-        $this->get_train_schedule();
-        // // Zonalprice
-        $this->get_zone_price();
-        //automototra stations
-        $this->get_automotora_stations();
-        //automototra price
-        $this->get_automotora_price();
-        //automotora trains
-        $this->get_train_details_new_automotora();
+                            $divice_properties = $this->get_device_properties($this->msg['field_68'], $this->msg['field_69']);
+                            if (!empty($divice_properties)) {
 
-        $this->get_exchange_rate();
-        $this->get_lagguage_sub_categories();
-
-        // // //card informations
-        // // //Author Filbert
-        $this->getCustomersCardAccountsInformations();
-        $this->msg['field_128'] = '1234567890';
-        $this->msg['field_39'] = '00';
-
-        $divice_properties = $this->get_device_properties($this->msg['field_68'], $this->msg['field_69']);
-        if (!empty($divice_properties)) {
-
-        $this->msg['field_4'] = '0.00';
-        // $this->msg['field_39']='00';
-        // $this->msg['field_62']=APP_VERSION;
-        $this->msg['device_id'] = $divice_properties[0]->id;
-        $this->msg['device_type'] = $divice_properties[0]->device_type;
-        $this->msg['device_name'] = $divice_properties[0]->device_name;
-        $this->msg['device_imei'] = $divice_properties[0]->device_imei;
-        $this->msg['device_serial'] = $divice_properties[0]->device_serial;
-        $this->msg['device_app_version'] = $divice_properties[0]->version;
-        $this->msg['device_status'] = $divice_properties[0]->activation_status;
-        $this->msg['device_station_id'] = $divice_properties[0]->station_id;
-        $this->msg['device_logoff_time'] = $divice_properties[0]->last_connect;
-        $this->msg['device_on_off'] = $divice_properties[0]->On_Off;
-        // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[11]);
-        $this->msg['station_name'] = $divice_properties[0]->station_name;
-        // //     // $divice_properties[14] = iconv('utf-8', 'cp1252', $divice_properties[14]);
-        $this->msg['province'] = "";
-        $this->msg['station_latitude'] = "";
-        $this->msg['station_longtude'] = "";
-        $this->msg['station_distance'] = "";
-        // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[19]);
-        // //     // $this->msg['first_Class'] = $value;
-        //     $this->msg['first_Class'] = $divice_properties[19];
-        // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[20]);
-        //     $this->msg['second_Class'] = $divice_properties[20];
-        // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[21]);
-        //     $this->msg['third_Class'] = $divice_properties[21];
-        $this->msg['device_ticket_sale_type'] = $divice_properties[0]->allowed_ticket_sale_type;
+                                $this->msg['field_4'] = '0.00';
+                                // $this->msg['field_39']='00';
+                                // $this->msg['field_62']=APP_VERSION;
+                                $this->msg['device_id'] = $divice_properties[0]->id;
+                                $this->msg['device_type'] = $divice_properties[0]->device_type;
+                                $this->msg['device_name'] = $divice_properties[0]->device_name;
+                                $this->msg['device_imei'] = $divice_properties[0]->device_imei;
+                                $this->msg['device_serial'] = $divice_properties[0]->device_serial;
+                                $this->msg['device_app_version'] = $divice_properties[0]->version;
+                                $this->msg['device_status'] = $divice_properties[0]->activation_status;
+                                $this->msg['device_station_id'] = $divice_properties[0]->station_id;
+                                $this->msg['device_logoff_time'] = $divice_properties[0]->last_connect;
+                                $this->msg['device_on_off'] = $divice_properties[0]->On_Off;
+                                // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[11]);
+                                $this->msg['station_name'] = $divice_properties[0]->station_name;
+                                // //     // $divice_properties[14] = iconv('utf-8', 'cp1252', $divice_properties[14]);
+                                $this->msg['province'] = "";
+                                $this->msg['station_latitude'] = "";
+                                $this->msg['station_longtude'] = "";
+                                $this->msg['station_distance'] = "";
+                                // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[19]);
+                                // //     // $this->msg['first_Class'] = $value;
+                                //     $this->msg['first_Class'] = $divice_properties[19];
+                                // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[20]);
+                                //     $this->msg['second_Class'] = $divice_properties[20];
+                                // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[21]);
+                                //     $this->msg['third_Class'] = $divice_properties[21];
+                                $this->msg['device_ticket_sale_type'] = $divice_properties[0]->allowed_ticket_sale_type;
 
 
-        $this->msg['balance_vendor_id'] = $divice_properties[0]->balance_vendor_id;
-        $this->msg['balance_product_id'] = $divice_properties[0]->balance_product_id;
+                                $this->msg['balance_vendor_id'] = $divice_properties[0]->balance_vendor_id;
+                                $this->msg['balance_product_id'] = $divice_properties[0]->balance_product_id;
 
-        //     //if($params[2]=='K')
-        $this->msg['station_lines'] = $this->get_station_passing_lines();
-        //     //TO BEDONE AFTER STATION ALLOCATION
-        //     //$this->msg['station_users']=$this->get_station_device_operators($this->msg['device_station_id']);
-        //     $this->msg['sahihi'] = $this->get_generated_sahihi($this->msg['field_3'] . $this->msg['field_4'] . $this->msg['field_7'] . $this->msg['field_11'] . $this->msg['field_39'] . $this->msg['field_61']);
-        }
-        }
-        }else{
-        $this->msg['field_39'] = '55';
-        }
+                                //     //if($params[2]=='K')
+                                $this->msg['station_lines'] = $this->get_station_passing_lines();
+                                //     //TO BEDONE AFTER STATION ALLOCATION
+                                //     //$this->msg['station_users']=$this->get_station_device_operators($this->msg['device_station_id']);
+                                //     $this->msg['sahihi'] = $this->get_generated_sahihi($this->msg['field_3'] . $this->msg['field_4'] . $this->msg['field_7'] . $this->msg['field_11'] . $this->msg['field_39'] . $this->msg['field_61']);
+                            }
+
+                        } else {
+                            $this->msg['field_39'] = '75';
+                        }
+                } else {
+                    $this->msg['field_39'] = '55';
+                }
+            } else {
+                $this->msg['field_39'] = '55';
+            }
 
 
+            /**
+             * Incase of success login credentials
+             * Start of JWT token and Encryption Logic
+             */
+            $token = auth()->guard('operator')->attempt([
+                'username' => $username,
+                'password' => $password
+            ]);
+            FacadesLog::info('credential', ["username" => $username, "password" => $password]);
+            FacadesLog::info('TOKEN', ["T" => $token]);
+            if (!empty($token)) {
+                $successResponse->status = true;
+                $successResponse->response_code = 200;
+                $successResponse->token = $token;
+                $successResponse->msg = $this->msg;
+                FacadesLog::info('BEFORE-ENCRYPTED-RESPONSE', ["Response" => $successResponse]);
+                $encryptedSuccess = EncryptionHelper::encrypt(json_encode($successResponse), $pwKey);
+                FacadesLog::info('ENCRYPTED-RESPONSE', ["encryptedResponse" => $encryptedSuccess]);
+                $dataPayload->data = $encryptedSuccess;
+                return response()->json($dataPayload);
+            }
 
-        /**
-         * Incase of success login credentials
-         * Start of JWT token and Encryption Logic
-         */
-        $token = auth()->guard('operator')->attempt([
-            'username' => $username,
-            'password' => $password
-        ]);
-        FacadesLog::info('credential',["username" =>$username, "password" => $password]);
+            /**
+             * this should also be implemented in the logic of failed credentials provided
+             */
+            $failedResponse->message = "Invalid Login Credentials";
+            $failedResponse->status = false;
+            $failedResponse->response_code = 401;
+            $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse), $pwKey);
+            FacadesLog::info('Failure', ["encryptedResponse" => $encryptedFailure]);
+            $dataPayload->data = $encryptedFailure;
+            return response()->json($dataPayload);
 
-        FacadesLog::info('TOKEN',["T" =>$token]);
-        if(!empty($token)){
-            $successResponse->message = "Successfully Login";
-            $successResponse->status =  true;
-            $successResponse->response_code = 200;
-            $successResponse->token = $token;
-            $encryptedSuccess = EncryptionHelper::encrypt(json_encode($successResponse),$pwKey);
-            FacadesLog::info('Success',["encryptedResponse" =>$encryptedSuccess]);
-            $dataPayload->data = $encryptedSuccess;
+        }catch (\Exception $e){
+            $failedResponse->message = "System Error, Contact Administrator";
+            $failedResponse->status = false;
+            $failedResponse->response_code = 506;
+            $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse), $pwKey);
+            FacadesLog::info('ERROR-ON-CACHE', ["Error Message" => $e]);
+            $dataPayload->data = $encryptedFailure;
             return response()->json($dataPayload);
         }
-
-        /**
-         * this should also be implemented in the logic of failed credentials provided
-         */
-        $failedResponse->message = "Invalid Login Credentials";
-        $failedResponse->status =  false;
-        $failedResponse->response_code = 401;
-        $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse),$pwKey);
-        FacadesLog::info('Failure',["encryptedResponse" =>$encryptedFailure]);
-        $dataPayload->data = $encryptedFailure;
-        return response()->json($dataPayload);
     }
 
     public function get_station_passing_lines()

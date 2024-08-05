@@ -13,10 +13,9 @@ return new class extends Migration
     {
         Schema::create('jwt_tokens', function (Blueprint $table) {
             $table->id();
-            $table->uuid('user_uuid');
-            // Foreign key to uuid column of users table
+            $table->unsignedBigInteger('operator_id');
             $table->foreign('operator_id')->references('id')->on('operators')->onDelete('cascade');
-            $table->string('unique_id')->unique()->index();
+            $table->string('token')->unique()->index();
             $table->string('description');
             $table->json('permissions')->nullable();
             $table->timestamps();
