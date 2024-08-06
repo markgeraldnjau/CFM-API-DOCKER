@@ -997,6 +997,10 @@ class DeviceApiController extends Controller
         validator([
             'data' => 'required'
         ]);
+
+        $successResponse = (object)null;
+        $failedResponse = (object)null;
+        $dataPayload = (object)null;
         try {
             $headers = getallheaders();
             $stringEncryptedByteAndroidId = $headers['Encrypted-Android-Id'] ?? null;
@@ -1022,10 +1026,15 @@ class DeviceApiController extends Controller
             $outerArray = $decodedJson;
             $username = $outerArray->field_42;
             $password = $outerArray->field_52;
+            if(empty($password) || empty($password)){
+                $failedResponse->message = VALIDATION_FAIL . " : " . USERNAME_AND_PASSWORD_REQUIRED;
+                $failedResponse->response_code = BAD_REQUEST;
+                $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse), $pwKey);
+                $dataPayload->data = $encryptedFailure;
+                return response()->json($dataPayload);
+            }
             $deviceId = $outerArray->code_number;
-            $successResponse = (object)null;
-            $failedResponse = (object)null;
-            $dataPayload = (object)null;
+
 
             /**
              * End Of Decryption Login
@@ -1179,6 +1188,17 @@ class DeviceApiController extends Controller
              * Incase of success login credentials
              * Start of JWT token and Encryption Logic
              */
+            // Get the token from the request
+            try {
+                $oldToken = JWTAuth::getToken();
+                // Invalidate the token
+                JWTAuth::invalidate($oldToken);
+                FacadesLog::info('Old-Token', [ "Message" => "Invalidated" , "New-Token" => $oldToken]);
+            }catch (\Exception $e){
+                FacadesLog::info('Old-Token', [ "Message" => " Not Invalidated" , "Error" => $e,]);
+            }
+
+
             $token = auth()->guard('operator')->attempt([
                 'username' => $username,
                 'password' => $password
@@ -1187,12 +1207,10 @@ class DeviceApiController extends Controller
             FacadesLog::info('TOKEN', ["T" => $token]);
             if (!empty($token)) {
                 $successResponse->status = true;
-                $successResponse->response_code = 200;
+                $successResponse->response_code = \HttpResponseCode::SUCCESS;
                 $successResponse->token = $token;
                 $successResponse->msg = $this->msg;
-                FacadesLog::info('BEFORE-ENCRYPTED-RESPONSE', ["Response" => $successResponse]);
                 $encryptedSuccess = EncryptionHelper::encrypt(json_encode($successResponse), $pwKey);
-                FacadesLog::info('ENCRYPTED-RESPONSE', ["encryptedResponse" => $encryptedSuccess]);
                 $dataPayload->data = $encryptedSuccess;
                 return response()->json($dataPayload);
             }
@@ -1202,7 +1220,7 @@ class DeviceApiController extends Controller
              */
             $failedResponse->message = "Invalid Login Credentials";
             $failedResponse->status = false;
-            $failedResponse->response_code = 401;
+            $failedResponse->response_code = \HttpResponseCode::UNAUTHORIZED;
             $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse), $pwKey);
             FacadesLog::info('Failure', ["encryptedResponse" => $encryptedFailure]);
             $dataPayload->data = $encryptedFailure;
@@ -1211,7 +1229,7 @@ class DeviceApiController extends Controller
         }catch (\Exception $e){
             $failedResponse->message = "System Error, Contact Administrator";
             $failedResponse->status = false;
-            $failedResponse->response_code = 506;
+            $failedResponse->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
             $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse), $pwKey);
             FacadesLog::info('ERROR-ON-CACHE', ["Error Message" => $e]);
             $dataPayload->data = $encryptedFailure;
@@ -5860,6 +5878,54 @@ class DeviceApiController extends Controller
             Log::error($th->getMessage());
             return response()->json($th->getMessage());
 
+        }
+    }
+
+    public function deviceLogout(Request $request){
+        validator([
+            'data' => 'required'
+        ]);
+        $logoutResponse = (object) null;
+        $privateKey = null;
+        try {
+            $headers = getallheaders();
+            $stringEncryptedByteAndroidId = $headers['Encrypted-Android-Id'] ?? null;
+            $jsonEncryptedAndroidId = json_decode($stringEncryptedByteAndroidId);
+            FacadesLog::info("Payload", ["data" => $request->data]);
+            FacadesLog::info("Header", ["encryptedByteAndroidId" => $jsonEncryptedAndroidId->data]);
+            if (!$jsonEncryptedAndroidId) {
+                return response()->json(['error' => "AndroidId Not Provided"]);
+            }
+            $decryptedAByteAndroidId = AsymmetricEncryption::decryptAsymmetric($jsonEncryptedAndroidId->data);
+            FacadesLog::info('AndroidId', ["decryptedAByteAndroidId" => $decryptedAByteAndroidId]);
+            $keys = DB::table('keys')
+                ->select('key')
+                ->where(['android_id' => $decryptedAByteAndroidId])->first();
+            if (!$keys) {
+                return response()->json(['error' => "No Key Found"]);
+            }
+            $privateKey = $keys->key;
+            $oldToken = JWTAuth::getToken();
+            $oldTokenString = (string) $oldToken;
+            // Invalidate the token
+            FacadesLog::info("oldToken", ["oldToken" => $oldTokenString]);
+            JWTAuth::invalidate($oldTokenString);
+            $logoutResponse->success = "Logout Successfully";
+            $logoutResponse->response_code = \HttpResponseCode::SUCCESS;
+            FacadesLog::info("privateKey", ["privateKey" => $privateKey]);
+            $res = EncryptionHelper::encrypt(json_encode($logoutResponse), $privateKey);
+            FacadesLog::info("LOGOUT", ["Response" => $logoutResponse]);
+            $last = (object) null;
+            $last->data = $res;
+            return response()->json($last);
+        } catch (\Exception $e) {
+            FacadesLog::error("LOGOUT", ["ERROR" => $e]);
+            $logoutResponse->success = "Logout Failed";
+            $logoutResponse->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $res = EncryptionHelper::encrypt(json_encode($logoutResponse), $privateKey);
+            $last = (object) null;
+            $last->data = $res;
+            return response()->json($last);
         }
     }
 

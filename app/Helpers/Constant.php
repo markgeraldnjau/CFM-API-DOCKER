@@ -24,6 +24,8 @@ class ResponseMessages
 const VALIDATION_FAIL = "Validation failed";
 const VALIDATION_ERROR = "Error";
 
+const USERNAME_AND_PASSWORD_REQUIRED = "Username And Password Is Required";
+
 // Common Responses
 const LOGIN_SUCCESSFULLY = "Login successfully";
 const SUCCESS_RESPONSE = "Success";

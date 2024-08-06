@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\Device\DeviceApiController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -21,6 +22,7 @@ Route::post('splash2', '\App\Http\Controllers\Api\Device\DeviceApiController@spl
 
 Route::group(['middleware'=>'auth:operator','encryption'],function (){
 
+    Route::post('otp_verification', '\App\Http\Controllers\Api\Device\DeviceApiController@otp_verification');
     Route::post('otp_verification', '\App\Http\Controllers\Api\Device\DeviceApiController@otp_verification');
     Route::get('automotora_prices', '\App\Http\Controllers\Api\Device\DeviceApiController@automotora_prices');
     Route::get('normal_prices', '\App\Http\Controllers\Api\Device\DeviceApiController@normal_prices');
@@ -51,6 +53,10 @@ Route::group(['middleware'=>'auth:operator','encryption'],function (){
     Route::post('train_layout', '\App\Http\Controllers\Api\Device\DeviceApiController@train_layout');
     Route::post('card_transactions', '\App\Http\Controllers\Api\Device\DeviceApiController@card_transactions');
     Route::post('packages', '\App\Http\Controllers\Api\Device\DeviceApiController@packages');
+
+    Route::post('deviceLogout', [DeviceApiController::class, 'deviceLogout']);
+
+
 
 });
 
