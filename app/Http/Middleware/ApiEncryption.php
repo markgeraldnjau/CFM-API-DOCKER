@@ -24,6 +24,7 @@ class ApiEncryption
         $decodedJson = EncryptionHelper::decrypt($request->data,$pwKey);
         $outerArray = json_decode($decodedJson);
         $request['data'] = $outerArray->data;
+        $request['key'] = $pwKey;
         return $next($request);
     }
 }

@@ -13,6 +13,7 @@ use App\Models\DeviceApi;
 use App\Models\Operator;
 use App\Models\Transaction\TicketTransaction;
 use App\Traits\CustomerTrait;
+use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
@@ -131,11 +132,9 @@ class DeviceApiController extends Controller
     public function get_app_parameters($deviceIMEI, $deviceSerial)
     {
 
-
         $result = DB::select("SELECT `version`,`printer_BDA`, `device_type`, `log_Off`,`station_ID` ,`id`,`device_last_token`
         FROM `device_details`
         WHERE (`device_imei`=:device_imei OR `device_serial`=:sim_serial)  AND `activation_status`='A'", ['device_imei' => $deviceIMEI, 'sim_serial' => $deviceSerial]);
-
 
         return $result;
 
@@ -158,100 +157,6 @@ class DeviceApiController extends Controller
         // $statusId = DB::getPdo()->lastInsertId();
         return true;
     }
-
-
-    private function decryptAsymmetric($encryptedData): string
-    {
-        $privateKeyPath = storage_path('/app/keys/private.key');
-        $privateKey = openssl_pkey_get_private(file_get_contents($privateKeyPath));
-        openssl_private_decrypt(base64_decode($encryptedData), $decryptedData, $privateKey);
-        $this->logger->log("error",["encryptedData: " => $decryptedData]);
-        return $decryptedData;
-    }
-
-    private function encryptAsymmetric($data)
-    {
-        $publicKey = storage_path('app/keys/public.key');
-        openssl_public_encrypt($data, $encrypted, openssl_pkey_get_public(file_get_contents($publicKey)));
-        return base64_encode($encrypted);
-    }
-
-
-    function encrypt($data,$key)
-    {
-        $iv_len = 12;
-        $iv = openssl_random_pseudo_bytes($iv_len);
-        $salt_len = 16;
-        $salt = openssl_random_pseudo_bytes($salt_len);
-        $tag = "";
-
-        // Generate key using PBKDF2
-        $keyGenerated = hash_pbkdf2('sha1', $key, $salt, 10000, 128, true);
-
-        // Encrypt using aes-128-gcm
-        $encrypted = openssl_encrypt(
-            $data,
-            "aes-128-gcm",
-            $keyGenerated,
-            OPENSSL_RAW_DATA,
-            $iv,
-            $tag,
-            "",
-            16
-        );
-
-        // Combine IV, salt, tag, and ciphertext
-        $encodedData = $iv . $salt . $encrypted . $tag;
-
-        // Base64 encode the combined data
-        $base64EncodedData = base64_encode($encodedData);
-        $base64EncodedData = str_replace("\\\\","",$base64EncodedData);
-        /* Log::error("ENC: " . $base64EncodedData);
-          Log::error("KEY2: " . $key);
-        $result = $this->decrypt($base64EncodedData,$key);
-           Log::error("Result: " . $result);*/
-        return $base64EncodedData;
-    }
-
-    function decrypt($encodedData, $pw)
-    {
-        try {
-            $decodedData = base64_decode($encodedData);
-
-            // Extract IV, salt, tag, and ciphertext
-            $iv_len = 12;
-            $iv = substr($decodedData, 0, $iv_len);
-            $salt_len = 16;
-            $salt = substr($decodedData, $iv_len, $salt_len);
-            $tag_len = 16;
-            $ciphertext = substr($decodedData, $iv_len + $salt_len, -16); // Exclude last 16 bytes for tag
-            $tag = substr($decodedData, -$tag_len); // Extract last 16 bytes for tag
-
-            // Generate key using PBKDF2
-            $key = hash_pbkdf2('sha1', $pw, $salt, 10000, 128, true);
-
-            // Decrypt using aes-128-gcm
-            $decrypted = openssl_decrypt(
-                $ciphertext,
-                "aes-128-gcm",
-                $key,
-                OPENSSL_RAW_DATA,
-                $iv,
-                $tag
-            );
-
-            if ($decrypted === false) {
-                FacadesLog::error("FAILED-TO-DECRYPT: " . openssl_error_string());
-
-            }
-
-            return $decrypted;
-        } catch (\Exception $e) {
-            FacadesLog::error("FAILED-TO-DECRYPT: " . json_encode($e->getMessage()));
-            return $e->getMessage();
-        }
-    }
-
 
 
     public function splash(Request $request){
@@ -461,8 +366,16 @@ class DeviceApiController extends Controller
         return response()->json($train);
     }
     public function train_layout(Request $request){
-
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->input('key');
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         $this->msg = $request;
+        try {
         $sql = "SELECT train_id,wagons.id as wagoon_id,serial_number,class_id,`number`,manufacture_id FROM `wagons`
          INNER JOIN train_wagons ON train_wagons.wagon_id=wagons.id
          INNER JOIN train_layouts ON train_layouts.id = train_wagons.train_layout_id
@@ -472,63 +385,108 @@ class DeviceApiController extends Controller
         $id = $this->msg['id'];
         $data = [ 'id'=>  $id];
         $result = $this->db_select($sql,$data);
-        try {
-
 
             $this->msg['train_layout'] = ['code' => "200",'status' => "success"
                 ,'message' => "Success",'data' => $result];
 
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg['train_layout'];
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
 
-        return  $this->msg['train_layout'];
+
+
     }
 
     public function card_transactions(Request $request){
-
-        $this->msg = $request;
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->input('key');
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
+        try {
         $sql = "SELECT * FROM ticket_transactions
          WHERE card_number=:card_number";
         $card_number = $this->msg['card_number'];
         $data = [ 'card_number'=>  $card_number];
         $result = $this->db_select($sql,$data);
-        try {
+
 
             $this->msg['card_transactions'] = $result;
 
+        $responseObject->message = "";
+        $responseObject->response_code = \HttpResponseCode::SUCCESS;
+        $responseObject->msg = $this->msg['card_transactions'];
+        $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+        $dataPayload->data = $encryptedResponse;
+        return response()->json($dataPayload);
+
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
 
-        return  $this->msg['card_transactions'];
     }
 
-    public function packages(){
+    public function packages(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->input('key');
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
 
-        // $this->msg = $request;
+        try {
         $sql = "SELECT * FROM customer_account_package_types where send_device_option = :send_device_option";
         $send_device_option = "1";
         $data = [ 'send_device_option'=>  $send_device_option];
         $result = $this->db_select($sql,$data);
-        try {
 
             $this->msg['packages'] = $result;
 
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg['packages'];
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
+
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
 
-        return  $this->msg['packages'];
+
     }
 
     public function pin_validation(Request $request){
 
-        // $this->msg = $request;
-        // $sql = "SELECT * FROM customer_account_package_types where send_device_option = :send_device_option";
-        // $send_device_option = "1";
-        // $data = [ 'send_device_option'=>  $send_device_option];
-        // $result = $this->db_select($sql,$data);
         try {
 
             $this->msg['response'] = ['code' => "200",'status' => "success"
@@ -581,31 +539,56 @@ class DeviceApiController extends Controller
     }
 
     public function authentication(Request $request){
-
-        $this->msg = $request;
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
+        try {
         $username = $this->msg['username'];
         $sql = "SELECT * FROM users where username = :username";
         $data = [ 'username'=>  $username];
         $result = $this->db_select($sql,$data);
-        try {
-
             $this->msg['response'] = ['code' => "200",'status' => "success"
                 ,'message' => "Success",'token' => $result[0]->token,'data' => ["message"=>"Registado com sucesso"]];
 
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg['response'];
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
+
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
 
-        return  $this->msg['response'];
     }
 
 
     public function ticket_transactions(Request $request){
-
-        $this->msg = $request;
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         $token = $this->msg['token'];
         $from_date = $this->msg['from_date'];
         $to_date = $this->msg['end_date'];
+
+        try {
         $sql = "SELECT * FROM users where token = :token";
         $data = [ 'token'=>  $token];
         $result = $this->db_select($sql,$data);
@@ -614,24 +597,41 @@ class DeviceApiController extends Controller
             $data = [ 'from_date'=>  $from_date,'to_date'=>  $to_date ];
             $transactions = $this->db_select($sql,$data);
         }
-        try {
-
             $this->msg['response'] = ['code' => "200",'status' => "success"
                 ,'message' => "Success",'transactions' => $transactions,'data' => ["message"=>"Registado com sucesso"]];
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg['response'];
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
+
 
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
 
-        return  $this->msg['response'];
     }
 
     public function cargo_transactions(Request $request){
-
-        $this->msg = $request;
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         $token = $this->msg['token'];
         $from_date = $this->msg['from_date'];
         $to_date = $this->msg['end_date'];
+        try {
         $sql = "SELECT * FROM users where token = :token";
         $data = [ 'token'=>  $token];
         $result = $this->db_select($sql,$data);
@@ -640,25 +640,44 @@ class DeviceApiController extends Controller
             $data = [ 'from_date'=>  $from_date,'to_date'=>  $to_date ];
             $transactions = $this->db_select($sql,$data);
         }
-        try {
+
 
             $this->msg['response'] = ['code' => "200",'status' => "success"
                 ,'message' => "Success",'transactions' => $transactions,'data' => ["message"=>"Registado com sucesso"]];
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg['response'];
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
 
-        return  $this->msg['response'];
+
     }
 
     public function summary_details(Request $request){
-
-        $this->msg = $request;
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         $token = $this->msg['token'];
         $date = $this->msg['date'];
         $sql = "SELECT * FROM users where token = :token";
         $data = [ 'token'=>  $token];
+        try {
         $result = $this->db_select($sql,$data);
         if(!empty($result[0]->username)){
             $sql = "SELECT operators.id,operators.full_name,device_imei,train_id,trains.train_number,total_tickets,total_amount,summary_date_time,
@@ -670,38 +689,63 @@ class DeviceApiController extends Controller
             $data = [ 'currentdate'=>  $date ];
             $transactions = $this->db_select($sql,$data);
         }
-        try {
+
 
             $this->msg['response'] = ['code' => "200",'status' => "success"
                 ,'message' => "Success",'data' => $transactions];
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg['response'];
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
 
-        return  $this->msg['response'];
+
     }
 
 
 
 
     public function balance_transfer(Request $request){
-
-        $this->msg = $request;
-        // $sql = "SELECT * FROM customer_account_package_types where send_device_option = :send_device_option";
-        // $send_device_option = "1";
-        // $data = [ 'send_device_option'=>  $send_device_option];
-        // $result = $this->db_select($sql,$data);
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         try {
 
             $this->msg['response'] = ['code' => "200",'status' => "success"
                 ,'message' => "Success",'data' => ["message"=>"Pagamento efectuado com sucesso"]];
 
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg['response'];
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
 
-        return  $this->msg['response'];
     }
 
     public function get_operator_allocation_seats($id)
@@ -1026,26 +1070,23 @@ class DeviceApiController extends Controller
             $outerArray = $decodedJson;
             $username = $outerArray->field_42;
             $password = $outerArray->field_52;
-            if(empty($password) || empty($password)){
+            $deviceId = $outerArray->code_number;
+            if(empty($username) || empty($password)){
                 $failedResponse->message = VALIDATION_FAIL . " : " . USERNAME_AND_PASSWORD_REQUIRED;
                 $failedResponse->response_code = BAD_REQUEST;
+                $failedResponse->msg = "";
                 $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse), $pwKey);
                 $dataPayload->data = $encryptedFailure;
                 return response()->json($dataPayload);
             }
-            $deviceId = $outerArray->code_number;
-
-
             /**
-             * End Of Decryption Login
+             * End Of Decryption during Login
              */
 
 
             /**
              * Start of the logic of other logic
              */
-
-
             $msg = null;
             $this->msg = (array) $decodedJson;
             $this->msg['MTI'] = "0630";
@@ -1195,7 +1236,7 @@ class DeviceApiController extends Controller
                 JWTAuth::invalidate($oldToken);
                 FacadesLog::info('Old-Token', [ "Message" => "Invalidated" , "New-Token" => $oldToken]);
             }catch (\Exception $e){
-                FacadesLog::info('Old-Token', [ "Message" => " Not Invalidated" , "Error" => $e,]);
+                FacadesLog::info('Old-Token', [ "Message" => " Not Invalidated , No Token"]);
             }
 
 
@@ -1203,9 +1244,8 @@ class DeviceApiController extends Controller
                 'username' => $username,
                 'password' => $password
             ]);
-            FacadesLog::info('credential', ["username" => $username, "password" => $password]);
-            FacadesLog::info('TOKEN', ["T" => $token]);
             if (!empty($token)) {
+                $successResponse->message = LOGIN_SUCCESSFULLY;
                 $successResponse->status = true;
                 $successResponse->response_code = \HttpResponseCode::SUCCESS;
                 $successResponse->token = $token;
@@ -1218,9 +1258,10 @@ class DeviceApiController extends Controller
             /**
              * this should also be implemented in the logic of failed credentials provided
              */
-            $failedResponse->message = "Invalid Login Credentials";
+            $failedResponse->message = \HttpResponseCode::BAD_REQUEST;
             $failedResponse->status = false;
             $failedResponse->response_code = \HttpResponseCode::UNAUTHORIZED;
+            $failedResponse->msg = "";
             $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse), $pwKey);
             FacadesLog::info('Failure', ["encryptedResponse" => $encryptedFailure]);
             $dataPayload->data = $encryptedFailure;
@@ -1230,6 +1271,7 @@ class DeviceApiController extends Controller
             $failedResponse->message = "System Error, Contact Administrator";
             $failedResponse->status = false;
             $failedResponse->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $successResponse->msg = "";
             $encryptedFailure = EncryptionHelper::encrypt(json_encode($failedResponse), $pwKey);
             FacadesLog::info('ERROR-ON-CACHE', ["Error Message" => $e]);
             $dataPayload->data = $encryptedFailure;
@@ -1330,9 +1372,16 @@ class DeviceApiController extends Controller
         }
     }
     public function transaction_details(Request $request){
-
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $id =  $request->data['id'];
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         try {
-            $id = $request['id'];
             $transactions = DB::table('ticket_transactions')
                 ->join('operators','operators.id','=','ticket_transactions.operator_id')
                 ->join('device_details','device_details.device_imei','=','ticket_transactions.device_number')
@@ -1358,26 +1407,50 @@ class DeviceApiController extends Controller
                 ->first();
 
             if($transactions) {
-                return response()->json(['transactions' =>$transactions], 200);
+                $responseObject->message = "";
+                $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                $responseObject->transactions = $transactions;
+                $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                $dataPayload->data = $encryptedResponse;
+                return response()->json($dataPayload);
 
             } else {
-                return response()->json([['code'=>'201','status' => 'failed', 'message' => 'Transactions Details' ]], 200);
+                $responseObject->message = "Transactions Details";
+                $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+                $responseObject->status = "failed";
+                $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                $dataPayload->data = $encryptedResponse;
+                return response()->json($dataPayload);
             }
 
 
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
 
     }
 
     public function transaction_topup_details(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $id =  $request->data['id'];
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
 
         try {
-            $id = $request['id'];
             $transactions = DB::table('ticket_transactions')
                 ->join('operators','operators.id','=','ticket_transactions.operator_id')
                 ->join('device_details','device_details.device_imei','=','ticket_transactions.device_number')
@@ -1387,17 +1460,34 @@ class DeviceApiController extends Controller
                 ->first();
 
             if($transactions) {
-                return response()->json(['transactions' =>$transactions], 200);
+                $responseObject->message = "";
+                $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                $responseObject->transactions = $transactions;
+                $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                $dataPayload->data = $encryptedResponse;
+                return response()->json($dataPayload);
 
             } else {
-                return response()->json([['code'=>'201','status' => 'failed', 'message' => 'Transactions Details' ]], 200);
+                $responseObject->message = "Transactions Details";
+                $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+                $responseObject->status = "failed";
+                $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                $dataPayload->data = $encryptedResponse;
+                return response()->json($dataPayload);
+
             }
 
 
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
 
@@ -1432,12 +1522,17 @@ class DeviceApiController extends Controller
     }
 
     public function card_topup(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $msg = null;
+        $this->msg = $request->data; //Process Login Message
+        $this->msg['MTI'] = "0630";
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         try {
-            $msg = null;
-            $this->msg = $request; //Process Login Message
-            $this->msg['MTI'] = "0630";
-
-
             //$this->log_event('TopUp',$this->msg['field_61']);
             if (!isset($this->msg['seat'], $this->msg['category'], $this->msg['zone_id'], $this->msg['fromStop'], $this->msg['toStop'])) {
 
@@ -1484,14 +1579,26 @@ class DeviceApiController extends Controller
             $this->msg['field_4'] = sprintf('%.2f', $this->msg['field_4'], 2);
             $this->process_card_topup();
 
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
+
 
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $responseObject->message =  $th->getMessage();
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
-        return response()->json($this->msg);
+
 
     }
 
@@ -1852,12 +1959,20 @@ class DeviceApiController extends Controller
     }
 
     public function operator_collection(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $id =  $request->data['id'];
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         try {
             $msg = null;
             $this->msg = [];
             $jsonMessage = json_encode([
                 'custom_message' => 'Request:',
-                'data' => $request // Example data from the request
+                'data' => $request->data // Example data from the request
             ]);
             $this->logger->log($jsonMessage);
             foreach ($request->all() as $key => $value) {
@@ -1911,24 +2026,44 @@ class DeviceApiController extends Controller
                 }
 
             }
+
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
+
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
-        return response()->json($this->msg);
+
     }
 
 
 
     public function report_incident(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $id =  $request->data['id'];
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
+        $msg = null;
+        $this->msg['MTI'] = "0630";
         try {
-            $msg = null;
-            $this->msg = $request; //Process Login Message
-            $this->msg['MTI'] = "0630";
-
-
             $params = $this->get_app_parameters($this->msg['field_68'], $this->msg['field_69']);
             $operator = $this->verify_message_source($this->msg['field_58'], null);
             $deviceID = $params[0]->id;
@@ -1940,15 +2075,26 @@ class DeviceApiController extends Controller
             }
 
 
-
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
-        return response()->json($this->msg);
+
 
     }
 
@@ -2680,11 +2826,19 @@ class DeviceApiController extends Controller
 
 
     public function changepassword(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $id =  $request->data['id'];
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
+        $msg = null;
+        $this->msg = $request->data; //Process Login Message
+        $this->msg['MTI'] = "0630";
         try {
-            $msg = null;
-            $this->msg = $request; //Process Login Message
-            $this->msg['MTI'] = "0630";
-
             $old = $this->msg['old_password'];
             $new = $this->msg['new_password'];
             $agent_username = $this->msg['field_58'];
@@ -2711,13 +2865,25 @@ class DeviceApiController extends Controller
             }
 
 
-            return response()->json($this->msg);
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
+
 
 
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
     }
@@ -3761,13 +3927,21 @@ class DeviceApiController extends Controller
 
     public function insert_summary_logs(Request $request)
     {
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
 
-        //Insertion of logs
-        $this->msg = $request;
         $output = $this->verify_message_source($this->msg['field_58'], null);
         $operator = $output[0]->id;
 
-        $sql = "INSERT INTO `device_summary_receipts`
+        try {
+
+            $sql = "INSERT INTO `device_summary_receipts`
                     (
                     `operator_id`,
                     `device_imei`,
@@ -3788,23 +3962,37 @@ class DeviceApiController extends Controller
                     )";
 
 
+            $parameters = array(
+                'operator_name' => $operator,
+                'device_imei' => $this->msg['field_68'],
+                'amount_collected' => $this->msg['field_4'],
+                'total_tickets' => $this->msg['total_tickets'],
+                'trans_type' => $this->msg['tran_type'],
+                'train_number' => $this->msg['train_number'],
+                'date_time' => $this->msg['date_time'],
+            );
 
-        $parameters = array(
-            'operator_name' => $operator,
-            'device_imei' => $this->msg['field_68'],
-            'amount_collected' => $this->msg['field_4'],
-            'total_tickets' => $this->msg['total_tickets'],
-            'trans_type' => $this->msg['tran_type'],
-            'train_number' => $this->msg['train_number'],
-            'date_time' => $this->msg['date_time'],
-        );
+            $status = $this->db_insert($sql, $parameters);
 
-        $status = $this->db_insert($sql,$parameters);
+            $this->msg['field_39'] = '00';
+            $this->msg['MTI'] = '0930';
+            $this->msg['field_37'] = '90111';
 
-        $this->msg['field_39'] = '00';
-        $this->msg['MTI'] = '0930';
-        $this->msg['field_37'] = '90111';
-
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
+        }catch (Exception $e){
+            $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
+        }
         //print_r(json_encode($parameters));
         return $this->msg;
 
@@ -3812,10 +4000,16 @@ class DeviceApiController extends Controller
 
 
     public function online_card_transaction(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         try {
-
             $isFirstTime = false;
-            $this->msg = $request;
             $output = $this->verify_message_source($this->msg['field_58'], null);
             $operator = $output[0]->id;
             $this->msg['MTI'] = "0210";
@@ -4105,25 +4299,45 @@ class DeviceApiController extends Controller
             }
             // $this->msg['tag_id']=Security::encrypt($this->msg['tag_id'], ENC_KEY);
             if (!$isFirstTime) {
-                return $this->msg;
+                $responseObject->message = "";
+                $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                $responseObject->transactions = $transactions;
+                $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                $dataPayload->data = $encryptedResponse;
+                return response()->json($dataPayload);
             }
 
         }
         catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
     }
 
     public function online_mobile_transaction(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
+
         try {
 
             $isFirstTime = false;
             $jsonMessage = json_encode([
                 'custom_message' => 'Request:',
-                'data' => $request // Example data from the request
+                'data' => $request->data // Example data from the request
             ]);
             $this->logger->log($jsonMessage);
             $this->msg = $request;
@@ -4444,14 +4658,26 @@ class DeviceApiController extends Controller
                 'data' => $this->msg // Example data from the request
             ]);
             if (!$isFirstTime) {
-                return $this->msg;
+                $responseObject->message = "";
+                $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                $responseObject->msg = $this->msg;
+                $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                $dataPayload->data = $encryptedResponse;
+                return response()->json($dataPayload);
+
             }
 
         }
         catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
     }
@@ -4634,9 +4860,19 @@ class DeviceApiController extends Controller
 
 
     public function online_transaction(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $msg = null;
+
+        $this->msg = $request->data;
+        $id =  $request->data['id'];
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
+
         try {
-            $msg = null;
-            $this->msg = $request;
             $this->msg['MTI'] = "0210";
 
             $output = $this->verify_message_source($this->msg['field_58'], null);
@@ -4697,72 +4933,7 @@ class DeviceApiController extends Controller
 
             //Check if its employee with ID //No tag Use
             if ($this->msg['category'] == 6 && !empty($this->msg['employee_id'])) {
-                //     $status = 9;
-                //     $account = "";
-                //     if (true) {
-                //         $account = $this->msg['employee_id'];
-                //         if (isset($this->msg['zone_id']) && !empty($this->msg['zone_id'])) {
-                //             //check if is on the same train
-                //             if ($this->check_if_employee_allowed_to_travel_now($this->msg['employee_id'], $this->msg['train_id'], true)) {
-                //                 $employeeDetails = $this->validate_and_fetch_employee_details($this->msg['employee_id']);
-                //                 if (isset($employeeDetails)) {
-                //                     if ($employeeDetails[21] == "EXPIRED") {
-                //                         $this->msg['field_39'] = '51';
-                //                         $this->msg['Message'] = 'Bundle Expired, Recharge your card';
-                //                     } else if ($employeeDetails[4] < 10) {
-                //                         $this->msg['field_39'] = '51';
-                //                         $this->msg['Message'] = 'No Money, Recharge your Card/Account';
-                //                     } else {
-                //                         $this->msg['field_39'] = '00';
-                //                         $this->msg['field_4'] = '0.00';
-                //                         $this->msg['name'] = $employeeDetails[1];
-                //                         $this->msg['ExpireDate'] = $employeeDetails[20];
-                //                         $this->msg['DaysBalance'] = $employeeDetails[22];
-                //                         $status = 0;
-                //                     }
-                //                     $account = $employeeDetails[7];
 
-                //                 } else {
-                //                     $this->msg['field_39'] = '65';
-                //                     $this->msg['Message'] = 'Exceeds travel frequency limit';
-                //                 }
-                //             } else {
-                //                 $this->msg['field_39'] = '25';
-                //                 $this->msg['Message'] = 'Unable to locate record';
-                //             }
-
-                //         } else {
-                //             $this->msg['field_39'] = '12';
-                //             $this->msg['Message'] = 'Invalid transaction';
-                //         }
-                //     } else {
-                //         $this->msg['field_39'] = '30';
-                //         $this->msg['message'] = 'Check employee ID is missing';
-                //     }
-
-                //     $type = 2;
-                //     $nature = 2;
-                //     $mode = 2;
-                //     $status = 1;
-                //     if($this->msg['location_name'] == "automotora"){
-                //         $type = 3;
-                //     }
-                //     //($msg,$type,$nature,$mode,$operator,$receiptNumber,$source,$net,$account,$card,$status,$trnxNo,$onoff)
-                //     if (!$this->record_temporary_payment_message($this->msg, $type, $nature, $mode, $operator, $receiptNumber, $source, $net, $account, null, $status, $trnx_No, $onoff)) //Record cash payments
-                //     {
-                //         if ($this->messageCode == '1062') {
-                //             $this->msg['field_39'] = '94';
-                //         } else {
-                //             $this->msg['field_39'] = '05';
-                //         }
-                //     } else {
-                //         $this->msg['field_39'] = '00';
-
-                //         $this->update_other_system_accounts($this->accountDrId, '-' . $this->msg['field_4']);
-                //         $this->update_other_system_accounts($this->accountCrId, $this->msg['field_4']);
-                //         $this->update_transaction_status($operator, $receiptNumber, 0);
-                //     }
-                //
             } else if ($this->msg['category'] == 6 && $this->msg['field_4'] == '0') {
                 $this->msg['field_39'] = '12';
                 $this->msg['Message'] = 'Invalid transaction';
@@ -4795,64 +4966,14 @@ class DeviceApiController extends Controller
                 }
             }
 
-            // $trnx_date = $request[0]->trnx_date;
-            // $trnx_time = $request[0]->trnx_time;
-            // $trnx_number = $request[0]->trnx_number;
-            // $trnx_type = $request[0]->trnx_type;
-            // $trnx_Nature = $request[0]->trnx_Nature;
-            // $trnx_mode = $request[0]->trnx_mode;
-            // $acc_number = $request[0]->acc_number;
-            // $card_number = $request[0]->card_number;
-            // $trnx_amount = $request[0]->trnx_amount;
-            // $fine_amount = $request[0]->fine_amount;
-            // $fine_status = $request[0]->fine_status;
-            // $device_number = $request[0]->device_number;
-            // $operator_id = $request[0]->operator_id;
-            // $trnx_status = $request[0]->trnx_status;
-            // $trnx_receipt = $request[0]->trnx_receipt;
-            // $trnx_source = $request[0]->trnx_source;
-            // $reference_number = $request[0]->reference_number;
-            // $signature = $request[0]->signature;
-            // $zone_id = $request[0]->zone_id;
-            // $class_id = $request[0]->class_id;
-            // $train_id = $request[0]->train_id;
-            // $category_id = $request[0]->category_id;
-            // $seat_no = $request[0]->seat_no;
-            // $station_from = $request[0]->station_from;
-            // $station_to = $request[0]->station_to;
-            // $net_status = $request[0]->net_status;
-            // $trnx_quality = $request[0]->trnx_quality;
-            // $on_off = $request[0]->on_off;
-            // $extended_trnx_type = $request[0]->extended_trnx_type;
-            // $customer_name = $request[0]->customer_name;
-            // $tag_id = $request[0]->tag_id;
 
 
-
-            // DB::beginTransaction();
-
-
-            //     $transaction = new TicketTransaction();
-            //     $transaction->trnx_date = $trnx_date;
-            //     $transaction->trnx_time = $trnx_time ;
-            //     $transaction->trnx_number = $trnx_number;
-            //     $transaction->category_id =  $category_id;
-            //     $transaction->trnx_amount =  $trnx_amount;
-            //     $transaction->class_id = $class_id;
-            //     $transaction->station_from = $station_from;
-            //     $transaction->station_to = $station_to;
-            //     $transaction->zone_id = $zone_id;
-            //     $transaction->train_id =  $train_id;
-            //     $transaction->operator_id = $operator_id;
-            //     $transaction->trnx_source = $trnx_source;
-            //     $transaction->signature = $signature;
-            //     $transaction->device_number =  $device_number;
-            //     $transaction->trnx_receipt = $trnx_receipt;
-            //     $transaction->extended_trnx_type = $extended_trnx_type;
-            //     $transaction->save();
-            //     DB::commit();
-            return response()->json($this->msg);
-            // return response()->json([['code'=>'200','trnx_status'=>'00','status' => 'success', 'message' => 'Successfully transaction Created']]);
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
 
 
@@ -4860,11 +4981,26 @@ class DeviceApiController extends Controller
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
     }
     public function reversal_transactions(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
+
         try {
             $msg = null;
             $this->msg = [];
@@ -4893,23 +5029,43 @@ class DeviceApiController extends Controller
                 'data' => $this->msg // Example data from the request
             ]);
             $this->logger->log($jsonMessage);
-            return response()->json($this->msg);
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
     }
 
 
     public function offline_transaction(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $msg = null;
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         try {
-            $msg = null;
+
             $this->msg = [];
             $jsonMessage = json_encode([
                 'custom_message' => 'Request:',
-                'data' => $request // Example data from the request
+                'data' => $request->data // Example data from the request
             ]);
             $this->logger->log($jsonMessage);
             foreach ($request->all() as $key => $value) {
@@ -4970,77 +5126,7 @@ class DeviceApiController extends Controller
                     $this->msg[$key]['field_39'] = '15';
                 }
 
-                //Cash Payment
 
-                //Check if its employee with ID //No tag Use
-                // if ($this->msg[$key]['category'] == '6' && !empty($this->msg[$key]['employee_id'])) {
-                //     $status = 9;
-                //     $account = "";
-                //     if (true) {
-                //         $account = $this->msg[$key]['employee_id'];
-                //         if (isset($this->msg[$key]['zone_id']) && !empty($this->msg[$key]['zone_id'])) {
-                //             //check if is on the same train
-                //             if ($this->check_if_employee_allowed_to_travel_now($this->msg[$key]['employee_id'], $this->msg[$key]['train_id'], true)) {
-                //                 $employeeDetails = $this->validate_and_fetch_employee_details($this->msg[$key]['employee_id']);
-                //                 if (isset($employeeDetails)) {
-                //                     if ($employeeDetails[21] == "EXPIRED") {
-                //                         $this->msg[$key]['field_39'] = '51';
-                //                         $this->msg[$key]['Message'] = 'Bundle Expired, Recharge your card';
-                //                     } else if ($employeeDetails[4] < 10) {
-                //                         $this->msg[$key]['field_39'] = '51';
-                //                         $this->msg[$key]['Message'] = 'No Money, Recharge your Card/Account';
-                //                     } else {
-                //                         $this->msg[$key]['field_39'] = '00';
-                //                         $this->msg[$key]['field_4'] = '0.00';
-                //                         $this->msg[$key]['name'] = $employeeDetails[1];
-                //                         $this->msg[$key]['ExpireDate'] = $employeeDetails[20];
-                //                         $this->msg[$key]['DaysBalance'] = $employeeDetails[22];
-                //                         $status = 0;
-                //                     }
-                //                     $account = $employeeDetails[7];
-
-                //                 } else {
-                //                     $this->msg[$key]['field_39'] = '65';
-                //                     $this->msg[$key]['Message'] = 'Exceeds travel frequency limit';
-                //                 }
-                //             } else {
-                //                 $this->msg[$key]['field_39'] = '25';
-                //                 $this->msg[$key]['Message'] = 'Unable to locate record';
-                //             }
-
-                //         } else {
-                //             $this->msg[$key]['field_39'] = '12';
-                //             $this->msg[$key]['Message'] = 'Invalid transaction';
-                //         }
-                //     } else {
-                //         $this->msg[$key]['field_39'] = '30';
-                //         $this->msg[$key]['message'] = 'Check employee ID is missing';
-                //     }
-
-                //     $type = 2;
-                //     $nature = 2;
-                //     $mode = 2;
-                //     $status = 1;
-                //     if($this->msg[$key]['location_name'] == "automotora"){
-                //         $type = 3;
-                //     }
-                //     //($msg,$type,$nature,$mode,$operator,$receiptNumber,$source,$net,$account,$card,$status,$trnxNo,$onoff)
-                //     if (!$this->record_temporary_payment_message($this->msg[$key], $type, $nature, $mode, $operator, $receiptNumber, $source, $net, $account, null, $status, $trnx_No, $onoff)) //Record cash payments
-                //     {
-                //         if ($this->messageCode == '1062') {
-                //             $this->msg[$key]['field_39'] = '94';
-                //         } else {
-                //             $this->msg[$key]['field_39'] = '05';
-                //         }
-                //     } else {
-                //         $this->msg[$key]['field_39'] = '00';
-
-                //         $this->update_other_system_accounts($this->accountDrId, '-' . $this->msg[$key]['field_4']);
-                //         $this->update_other_system_accounts($this->accountCrId, $this->msg[$key]['field_4']);
-                //         $this->update_transaction_status($operator, $receiptNumber, 0);
-                //     }
-                //
-                //  }  else {
                 $type = 2;
                 $nature = 2;
                 $mode = 1;
@@ -5073,38 +5159,70 @@ class DeviceApiController extends Controller
                 'data' => $this->msg // Example data from the request
             ]);
             $this->logger->log($jsonMessage);
-            return response()->json($this->msg);
-            // return response()->json([['code'=>'200','trnx_status'=>'00','status' => 'success', 'message' => 'Successfully transaction Created']]);
-
-
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
 
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
     }
 
     public function summary_verification(Request $request){
-        $this->msg = $request;
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
 
-        $username = $this->msg['field_42'];
-        $pin = $this->msg['field_52'];
-        $sql = 'SELECT  id FROM `operators`
+        try {
+            $username = $this->msg['field_42'];
+            $pin = $this->msg['field_52'];
+            $sql = 'SELECT  id FROM `operators`
             WHERE `password`=:pin AND `username`=:username';
 
 
-        $data = [ 'pin' => $pin,'username' => $username];
-        $result = $this->db_select($sql,$data);
-        if (!empty($result[0])) {
-            $this->msg['field_39'] = '00';
-        } else {
-            $this->msg['field_39'] = '91';
+            $data = ['pin' => $pin, 'username' => $username];
+            $result = $this->db_select($sql, $data);
+            if (!empty($result[0])) {
+                $this->msg['field_39'] = '00';
+            } else {
+                $this->msg['field_39'] = '91';
+            }
+
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
+
+        }catch (Exception $e){
+            $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
 
-        return $this->msg;
     }
 
     public function get_info_detail($trainID)
@@ -5659,11 +5777,19 @@ class DeviceApiController extends Controller
 
 
     public function operator_transaction_scanning(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
+
         try {
-            $ticket_number = $request[0]['ticket_number'];
-            $trnx_time = $request[0]['trnx_time'];
-            $station_id = $request[0]['station_id'];
-            $operator_id = $request[0]['operator_id'];
+            $ticket_number = $request->data['ticket_number'];
+            $trnx_time = $request->data['trnx_time'];
+            $station_id = $request->data['station_id'];
+            $operator_id = $request->data['operator_id'];
 
 
 
@@ -5679,12 +5805,26 @@ class DeviceApiController extends Controller
                             DB::table('ticket_transactions')
                                 ->where('signature', $ticket_number)
                                 ->update(['validation_status' => '1','validator' => $operator_id]);
-                            return response()->json([['code'=>'200','trnx_status'=>'00','status' => 'success', 'message' => 'Valid Transactions', 'code' => '1']]);
+                            $responseObject->message = "Invalid Transactions";
+                            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                            $responseObject->code = '200';
+                            $responseObject->trnx_status = '00';
+                            $responseObject->status = 'success';
+                            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                            $dataPayload->data = $encryptedResponse;
+                            return response()->json($dataPayload);
                         }else{
                             DB::table('ticket_transactions')
                                 ->where('signature', $ticket_number)
                                 ->update(['validation_status' => '2','validator' => $operator_id]);
-                            return response()->json([['code'=>'200','trnx_status'=>'99','status' => 'Failed', 'message' => 'Invalid Transactions','code' => '2']]);
+                            $responseObject->message = "Invalid Transactions";
+                            $responseObject->response_code = \HttpResponseCode::BAD_REQUEST;
+                            $responseObject->code = '200';
+                            $responseObject->trnx_status = '99';
+                            $responseObject->status = 'Failed';
+                            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                            $dataPayload->data = $encryptedResponse;
+                            return response()->json($dataPayload);
 
                         }
                     }else{
@@ -5692,19 +5832,38 @@ class DeviceApiController extends Controller
                             DB::table('ticket_transactions')
                                 ->where('signature', $ticket_number)
                                 ->update(['validation_status' => '1','validator' => $operator_id]);
-                            return response()->json([['code'=>'200','trnx_status'=>'00','status' => 'success', 'message' => 'Valid Transactions','code' => '1']]);
+                            $responseObject->message = "Valid Transactions";
+                            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                            $responseObject->code = '200';
+                            $responseObject->trnx_status = '99';
+                            $responseObject->status = 'success';
+                            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                            $dataPayload->data = $encryptedResponse;
+                            return response()->json($dataPayload);
 
                         }else{
                             DB::table('ticket_transactions')
                                 ->where('signature', $ticket_number)
                                 ->update(['validation_status' => '2','validator' => $operator_id]);
-                            return response()->json([['code'=>'200','trnx_status'=>'99','status' => 'Failed', 'message' => 'Invalid Transactions','code' => '2']]);
-
+                            $responseObject->message = "invalid Transactions";
+                            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                            $responseObject->code = '200';
+                            $responseObject->trnx_status = '99';
+                            $responseObject->status = 'Success';
+                            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                            $dataPayload->data = $encryptedResponse;
+                            return response()->json($dataPayload);
                         }
                     }
                 }else{
-
-                    return response()->json([['code'=>'200','trnx_status'=>'99','status' => 'Failed', 'message' => 'Invalid Transactions','code' => '0']]);
+                    $responseObject->message = "invalid Transactions";
+                    $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                    $responseObject->code = '200';
+                    $responseObject->trnx_status = '99';
+                    $responseObject->status = 'Success';
+                    $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                    $dataPayload->data = $encryptedResponse;
+                    return response()->json($dataPayload);
                 }}else{
                 $transactionsDetails = DB::table('ticket_transactions')
                     ->where('signature',$ticket_number)
@@ -5714,9 +5873,24 @@ class DeviceApiController extends Controller
                     DB::table('ticket_transactions')
                         ->where('signature', $ticket_number)
                         ->update(['validation_status' => '1','validator' => $operator_id]);
-                    return response()->json([['code'=>'200','trnx_status'=>'00','status' => 'Success', 'message' => 'Valid Transactions','code' => '1']]);
+                    $responseObject->message = "Valid Transactions";
+                    $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                    $responseObject->code = '200';
+                    $responseObject->trnx_status = '00';
+                    $responseObject->status = 'Success';
+                    $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                    $dataPayload->data = $encryptedResponse;
+                    return response()->json($dataPayload);
                 }else{
-                    return response()->json([['code'=>'200','trnx_status'=>'99','status' => 'Failed', 'message' => 'Invalid Transactions','code' => '0']]);
+                    $responseObject->message = "Invalid Transactions";
+                    $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                    $responseObject->code = '200';
+                    $responseObject->trnx_status = '99';
+                    $responseObject->status = 'Failed';
+                    $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+                    $dataPayload->data = $encryptedResponse;
+                    return response()->json($dataPayload);
+
                 }
 
             }
@@ -5726,44 +5900,59 @@ class DeviceApiController extends Controller
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
     }
 
     public function normal_transaction(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
+
         try {
-            $trnx_date = $request[0]['trnx_date'];
-            $trnx_time = $request[0]['trnx_time'];
-            $trnx_number = $request[0]['trnx_number'];
-            $trnx_type = $request[0]['trnx_type'];
-            $trnx_Nature = $request[0]['trnx_Nature'];
-            $trnx_mode = $request[0]['trnx_mode'];
-            $acc_number = $request[0]['acc_number'];
-            $card_number = $request[0]['card_number'];
-            $trnx_amount = $request[0]['trnx_amount'];
-            $fine_amount = $request[0]['fine_amount'];
-            $fine_status = $request[0]['fine_status'];
-            $device_number = $request[0]['device_number'];
-            $operator_id = $request[0]['operator_id'];
-            $trnx_status = $request[0]['trnx_status'];
-            $trnx_receipt = $request[0]['trnx_receipt'];
-            $trnx_source = $request[0]['trnx_source'];
-            $reference_number = $request[0]['reference_number'];
-            $signature = $request[0]['signature'];
-            $zone_id = $request[0]['zone_id'];
-            $class_id = $request[0]['class_id'];
-            $train_id = $request[0]['train_id'];
-            $category_id = $request[0]['category_id'];
-            $seat_no = $request[0]['seat_no'];
-            $station_from = $request[0]['station_from'];
-            $station_to = $request[0]['station_to'];
-            $net_status = $request[0]['net_status'];
-            $trnx_quality = $request[0]['trnx_quality'];
-            $on_off = $request[0]['on_off'];
-            $extended_trnx_type = $request[0]['extended_trnx_type'];
-            $customer_name = $request[0]['customer_name'];
-            $tag_id = $request[0]['tag_id'];
+            $trnx_date = $request->data['trnx_date'];
+            $trnx_time = $request->data['trnx_time'];
+            $trnx_number = $request->data['trnx_number'];
+            $trnx_type = $request->data['trnx_type'];
+            $trnx_Nature = $request->data['trnx_Nature'];
+            $trnx_mode = $request->data['trnx_mode'];
+            $acc_number = $request->data['acc_number'];
+            $card_number = $request->data['card_number'];
+            $trnx_amount = $request->data['trnx_amount'];
+            $fine_amount = $request->data['fine_amount'];
+            $fine_status = $request->data['fine_status'];
+            $device_number =$request->data['device_number'];
+            $operator_id = $request->data['operator_id'];
+            $trnx_status = $request->data['trnx_status'];
+            $trnx_receipt =$request->data['trnx_receipt'];
+            $trnx_source =$request->data['trnx_source'];
+            $reference_number =$request->data['reference_number'];
+            $signature = $request->data['signature'];
+            $zone_id = $request->data['zone_id'];
+            $class_id =$request->data['class_id'];
+            $train_id = $request->data['train_id'];
+            $category_id = $request->data['category_id'];
+            $seat_no = $request->data['seat_no'];
+            $station_from = $request->data['station_from'];
+            $station_to = $request->data['station_to'];
+            $net_status = $request->data['net_status'];
+            $trnx_quality = $request->data['trnx_quality'];
+            $on_off =$request->data['on_off'];
+            $extended_trnx_type = $request->data['extended_trnx_type'];
+            $customer_name = $request->data['customer_name'];
+            $tag_id = $request->data['tag_id'];
 
 
 
@@ -5789,27 +5978,45 @@ class DeviceApiController extends Controller
             $transaction->extended_trnx_type = $extended_trnx_type;
             $transaction->save();
             DB::commit();
-            return response()->json([['code'=>'200','trnx_status'=>'00','status' => 'success', 'message' => 'Successfully transaction Created']]);
-
+            $responseObject->message = "Successfully transaction Created";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->code = '200';
+            $responseObject->trnx_status = '00';
+            $responseObject->status = 'success';
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
 
 
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
     }
 
 
     public function operator_summary(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $msg = null;
+        $this->msg = $request->data;
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
+
         try {
-            $msg = null;
-            $this->msg = $request; //Process Login Message
             $this->msg['MTI'] = "0630";
-
-
             $dateTime = now();
             $params = $this->get_app_parameters($this->msg['field_68'], $this->msg['field_69']);
             $operator = $this->verify_message_source($this->msg['field_42'], null);
@@ -5837,46 +6044,89 @@ class DeviceApiController extends Controller
             //     $this->msg['field_39'] = '05';
             // }
 
-
-
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
-
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
-        return response()->json($this->msg);
     }
 
 
 
     public function automotora_prices(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         try {
             $operatorCategories = DB::table('tbl_price_table_automotora')->get();
 
             //   Log::info("operatorCategories data are ");
             //   Log::info($operatorCategories);
-            return response()->json($operatorCategories);
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->operatorCategories = $operatorCategories;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
-
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         }
     }
 
     public function normal_prices(Request $request){
+        $request->validate([
+            'data' =>'required',
+            'key' => 'required'
+        ]);
+        $pwKey = $request->key;
+        $dataPayload = (object)null;
+        $responseObject = (object) null;
         try {
             $normalprices = DB::table('tbl_price_table')->get();
 
             //   Log::info("operatorCategories data are ");
             //   Log::info($operatorCategories);
-            return response()->json($normalprices);
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->normalprices = $normalprices;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
         } catch (\Throwable $th) {
             //throw $th;
             Log::error($th->getMessage());
-            return response()->json($th->getMessage());
+            $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
+            $responseObject->message =  $this->exceptionErrorMsg;
+            $responseObject->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+            $responseObject->msg =  $this->exceptionErrorMsg;
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         }
     }
@@ -5910,7 +6160,7 @@ class DeviceApiController extends Controller
             // Invalidate the token
             FacadesLog::info("oldToken", ["oldToken" => $oldTokenString]);
             JWTAuth::invalidate($oldTokenString);
-            $logoutResponse->success = "Logout Successfully";
+            $logoutResponse->message = "Logout Successfully";
             $logoutResponse->response_code = \HttpResponseCode::SUCCESS;
             FacadesLog::info("privateKey", ["privateKey" => $privateKey]);
             $res = EncryptionHelper::encrypt(json_encode($logoutResponse), $privateKey);
@@ -5920,7 +6170,7 @@ class DeviceApiController extends Controller
             return response()->json($last);
         } catch (\Exception $e) {
             FacadesLog::error("LOGOUT", ["ERROR" => $e]);
-            $logoutResponse->success = "Logout Failed";
+            $logoutResponse->message = "Logout Failed";
             $logoutResponse->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
             $res = EncryptionHelper::encrypt(json_encode($logoutResponse), $privateKey);
             $last = (object) null;
