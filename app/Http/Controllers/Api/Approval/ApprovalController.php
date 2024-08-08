@@ -8,11 +8,11 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Approval\ApprovalCollectionRequest;
 use App\Models\Approval\ApprovalProcess;
 use App\Models\Approval\ProcessFlowActor;
-use App\Models\Cargo\CargoCategory;
 use App\Traits\ApiResponse;
 use App\Traits\ApprovalTrait;
 use App\Traits\AuditTrail;
 use App\Traits\checkAuthPermsissionTrait;
+use App\Traits\CommonTrait;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,7 +21,7 @@ use Illuminate\Support\Facades\Validator;
 
 class ApprovalController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait, ApprovalTrait;
+    use ApiResponse, AuditTrail, checkAuthPermsissionTrait, ApprovalTrait, CommonTrait;
 
     //
     public function index(Request $request)
@@ -34,6 +34,7 @@ class ApprovalController extends Controller
                     $fail("The $attribute is not valid.");
                 }
             }],
+            'status' => ['nullable', 'string', 'max:10']
         ]);
 
 
@@ -87,13 +88,13 @@ class ApprovalController extends Controller
             $cargoCategories = $query->orderByDesc('ap.updated_at')->paginate($itemPerPage);
 
             if (empty($cargoCategories)) {
-                return $this->warn(null, 'No approval process found!', 404);
+                return $this->warn(null, 'No approval process found!', HTTP_NOT_FOUND);
             }
             $this->auditLog("View Approval processes for " . $approvalProcessCode, PORTAL, null, null);
             return $this->success($cargoCategories, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -109,6 +110,8 @@ class ApprovalController extends Controller
                 $approvalLogs = $this->getApprovalLogsByApprovalId($approvalProcess->id);
                 $record = $this->getRecordDetails($approvalProcess);
                 $this->auditLog("View Approval Process: ". $approvalProcess->name, PORTAL, null, null);
+            } else {
+                return $this->error(null, "No approval process detail", HTTP_NOT_FOUND);
             }
             $data = [
                 'approval_process' => $approvalProcess,
@@ -120,10 +123,10 @@ class ApprovalController extends Controller
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
             Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -131,14 +134,11 @@ class ApprovalController extends Controller
 
     public function store(ApprovalCollectionRequest $request)
     {
+        $approvalProcess = ApprovalProcess::findOrFail($request->approval_process_id);
+        $nextStepActorId = ProcessFlowActor::where('process_flow_configuration_id', $approvalProcess->process_flow_configuration_id)
+            ->where('sequence', $approvalProcess->current_actor_sequence + 1)->value('id');
         DB::beginTransaction();
         try {
-            //TODO: Get id based on who have the privelage
-            $approvalProcess = ApprovalProcess::findOrFail($request->approval_process_id);
-            $nextStepActorId = ProcessFlowActor::where('process_flow_configuration_id', $approvalProcess->process_flow_configuration_id)
-                ->where('sequence', $approvalProcess->current_actor_sequence + 1)
-                ->value('id');
-
             $approvalProcessOld = clone $approvalProcess;
 
             //Decide Action Per Approval Sequence Level
@@ -151,13 +151,13 @@ class ApprovalController extends Controller
             if (in_array($action, [APPROVE, APPROVED_AND_FINISHED])){
                 $response = $this->processApproval($approvalProcess, $action, $nextStepActorId, $request->comment, $request, TRUE);
                 if (empty($response)){
-                    return $this->error(null, "Something wrong, with approval process update, contact admin for more assistance", 500);
+                    return $this->error(null, "Something wrong, with approval process update, contact admin for more assistance", HTTP_INTERNAL_SERVER_ERROR);
                 }
                 $this->auditLog("Approve Approval Process: ". $approvalProcess->name, PORTAL, $approvalProcess, $approvalProcessOld);
                 DB::commit();
                 return $this->success(null, DATA_SAVED);
             } else {
-                return $this->error(null, $action, 500);
+                return $this->error(null, $action, HTTP_INTERNAL_SERVER_ERROR);
             }
         } catch (RestApiException $e) {
             DB::rollBack();
@@ -165,12 +165,11 @@ class ApprovalController extends Controller
         } catch (ModelNotFoundException $e) {
             DB::rollBack();
             Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
             DB::rollBack();
-
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
