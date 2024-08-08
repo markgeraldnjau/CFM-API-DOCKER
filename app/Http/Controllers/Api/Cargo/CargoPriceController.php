@@ -5,16 +5,15 @@ namespace App\Http\Controllers\Api\Cargo;
 use App\Exceptions\RestApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Cargo\CargoPriceRequest;
-use App\Imports\CardsImport;
 use App\Imports\Cargo\CargoPricesImport;
 use App\Models\Cargo\CargoCategory;
-use App\Models\Cargo\CargoCustomerType;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\AuthTrait;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 use Maatwebsite\Excel\Facades\Excel;
 
 class CargoPriceController extends Controller
@@ -26,6 +25,16 @@ class CargoPriceController extends Controller
     public function index(Request $request)
     {
         //
+        $validator = Validator::make($request->all(), [
+            'search_query' => ['nullable', 'string', 'max:255'],
+            'item_per_page' => ['nullable', 'numeric', 'max:255'],
+        ]);
+
+        if ($validator->fails()) {
+            $errors = implode(', ', $validator->errors()->all());
+            return $this->error(null, $errors, HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $searchQuery = $request->input('search_query');
         $itemPerPage = $request->input('item_per_page', 10);
         try {
@@ -48,7 +57,7 @@ class CargoPriceController extends Controller
             if ($searchQuery !== null) {
                 $query->where(function ($query) use ($searchQuery) {
                     $query->where('cp.charge', 'like', "%$searchQuery%")
-                    ->where('cc.name', 'like', "%$searchQuery%");
+                        ->where('cc.name', 'like', "%$searchQuery%");
                 });
             }
 
@@ -61,18 +70,10 @@ class CargoPriceController extends Controller
             return $this->success($cargoPrices, DATA_RETRIEVED);
         } catch (\Exception $e) {
             Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
-    }
-
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
     }
 
 
@@ -94,7 +95,7 @@ class CargoPriceController extends Controller
                 Excel::import($import, request()->file('new_cargo_price_file'));
 
                 if (!$import->importSuccess) {
-                    return $this->error(null, $import->errors, 500);
+                    return $this->error(null, $import->errors, HTTP_INTERNAL_SERVER_ERROR);
                 }
 
             } else if ($category->code == SPECIAL_ONE_CARGO_CATEGORY){
@@ -102,47 +103,12 @@ class CargoPriceController extends Controller
             } else if ($category->code == SPECIAL_TWO_CARGO_CATEGORY){
 
             }
-//            dd('here');
-
-//            $this->auditLog("Create cargo prices for category: ". $category->name, PORTAL, null, null);
             DB::commit();
             return $this->success(null, DATA_SAVED. " for ". $category->name);
         } catch (\Exception $e) {
             Log::error($e->getMessage());
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
-    {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
     }
 }

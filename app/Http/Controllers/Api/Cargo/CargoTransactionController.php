@@ -9,67 +9,80 @@ use App\Models\Cargo\CargoTransaction;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\checkAuthPermsissionTrait;
+use App\Traits\CommonTrait;
 use Barryvdh\DomPDF\Facade\Pdf as PDF;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
+use Kreait\Firebase\Database\Transaction;
 
 class CargoTransactionController extends Controller
 {
-    use ApiResponse, checkAuthPermsissionTrait, AuditTrail;
+    use ApiResponse, checkAuthPermsissionTrait, AuditTrail, CommonTrait;
     /**
      * Display a listing of the resource.
      */
     public function index(Request $request)
     {
+
+        $validator = Validator::make($request->all(), [
+            'search_query' => ['nullable', 'string', 'max:255'],
+            'item_per_page' => ['nullable', 'numeric', 'max:255'],
+        ]);
+
+        if ($validator->fails()) {
+            $errors = implode(', ', $validator->errors()->all());
+            return $this->error(null, $errors, HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $this->checkPermissionFn($request, VIEW);
 
-        $criteria = $request->input('criteria');
         $searchQuery = $request->input('search_query');
         $itemPerPage = $request->input('item_per_page', 10);
 
         try {
             $query = DB::table('cargo_transactions as ct')->select(
                 'ct.id',
-                    'ct.token',
-                    'ct.item_id',
-                    'ct.item_name',
-                    'ct.total_amount',
-                    'ct.total_kg',
-                    'ct.quantity',
-                    'ct.receipt_number',
-                    'ct.station_from',
-                    'ct.station_to',
-                    'ct.track_status',
-                    'ct.receiver_name',
-                    'ct.receiver_phone',
-                    'ct.sender_name',
-                    'ct.sender_phone',
-                    'ct.operator_id',
-                    'ct.train_id',
-                    'ct.device_number',
-                    'ct.reference_number',
-                    'ct.on_off',
-                    'ct.paid_status',
-                    'ct.extended_trnx_type',
-                    'ct.collection_batch_number_id',
-                    'ct.is_collected',
-                    'ct.trnx_date',
-                    'ct.trnx_time',
-                    'ct.created_at',
-                    //other
-                    'tr.train_name',
-                    'op.full_name',
-                    //Stations
-                    'from_station.station_name as from_station_name',
-                    'to_station.station_name as to_station_name',
-                    //Extended Transaction type
-                    'ct.extended_trnx_type',
-                    'ett.name as extended_transaction_type',
-                    //Transaction Status
-                    'ct.trnx_status',
-                    'ts.name as transaction_status'
-                )
+                'ct.token',
+                'ct.item_id',
+                'ct.item_name',
+                'ct.total_amount',
+                'ct.total_kg',
+                'ct.quantity',
+                'ct.receipt_number',
+                'ct.station_from',
+                'ct.station_to',
+                'ct.track_status',
+                'ct.receiver_name',
+                'ct.receiver_phone',
+                'ct.sender_name',
+                'ct.sender_phone',
+                'ct.operator_id',
+                'ct.train_id',
+                'ct.device_number',
+                'ct.reference_number',
+                'ct.on_off',
+                'ct.paid_status',
+                'ct.extended_trnx_type',
+                'ct.collection_batch_number_id',
+                'ct.is_collected',
+                'ct.trnx_date',
+                'ct.trnx_time',
+                'ct.created_at',
+                //other
+                'tr.train_name',
+                'op.full_name',
+                //Stations
+                'from_station.station_name as from_station_name',
+                'to_station.station_name as to_station_name',
+                //Extended Transaction type
+                'ct.extended_trnx_type',
+                'ett.name as extended_transaction_type',
+                //Transaction Status
+                'ct.trnx_status',
+                'ts.name as transaction_status'
+            )
                 ->join('trains as tr', 'tr.id', 'ct.train_id')
                 ->join('train_stations as from_station', 'from_station.id', 'ct.station_from')
                 ->join('train_stations as to_station', 'to_station.id', 'ct.station_to')
@@ -95,34 +108,18 @@ class CargoTransactionController extends Controller
             $cargoCustomers = $query->orderByDesc('ct.updated_at')->paginate($itemPerPage);
 
             if (!$cargoCustomers) {
-                throw new RestApiException(404, 'No cargo customer found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No cargo customer found!');
             }
             $this->auditLog("View All Transactions", PORTAL, null, null);
             return $this->success($cargoCustomers, DATA_RETRIEVED);
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
-    }
-
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
-
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
-    {
-        //
     }
 
     /**
@@ -193,7 +190,7 @@ class CargoTransactionController extends Controller
             ];
 
             if (!$data) {
-                throw new RestApiException(404, 'No cargo transaction detail found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No cargo transaction detail found!');
             }
             $this->auditLog("View Transaction Details", PORTAL, null, null);
             return $this->success($data, DATA_RETRIEVED);
@@ -201,35 +198,11 @@ class CargoTransactionController extends Controller
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (\Exception $e) {
 
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
     }
 
     /**
@@ -238,7 +211,7 @@ class CargoTransactionController extends Controller
     public function cancelTransaction(Request $request)
     {
         $validatedData = $request->validate([
-            'id' => 'required',
+            'id' => 'required|string|exists:cargo_transactions,id',
         ]);
         //
         DB::beginTransaction();
@@ -246,8 +219,8 @@ class CargoTransactionController extends Controller
 
             $transaction = CargoTransaction::findOrFail($validatedData['id']);
 
-            if (!$transaction){
-                throw new RestApiException(404, 'invalid cargo transaction found!');
+            if (!$transaction) {
+                throw new RestApiException(HTTP_NOT_FOUND, 'invalid cargo transaction found!');
             }
 
             $transaction->update(['trnx_status' => CANCELLED]);
@@ -257,44 +230,15 @@ class CargoTransactionController extends Controller
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-    public function testReceipt(Request $request)
+    public function transactionReceipt()
     {
-        // Logic to fetch transaction details (replace this with your own logic)
-        $transaction = [
-            'id' => 123,
-            'date' => '2024-03-15',
-            'amount' => 100.00,
-            // Add more transaction details as needed
-        ];
-
-        return view('pdf.cargo-receipt', compact('transaction'));
-
-        // Generate PDF using the template and transaction data
-        $pdf = PDF::loadView('pdf.cargo-receipt', compact('transaction'));
-
-        // Save the PDF to a temporary file
-        $tempFilePath = tempnam(sys_get_temp_dir(), 'receipt');
-        $pdf->save($tempFilePath);
-
-        // Return the URL to access the PDF stream
-        $url = route('receipt.stream', ['filename' => basename($tempFilePath)]);
-        return response()->json(['url' => $url]);
-    }
-    public function transactionReceipt(Request $request)
-    {
-        // Logic to fetch transaction details (replace this with your own logic)
-        $transaction = [
-            'id' => 123,
-            'date' => '2024-03-15',
-            'amount' => 100.00,
-            // Add more transaction details as needed
-        ];
+        $transaction = Transaction::first();
 
         // Generate PDF using the template and transaction data
         $pdf = PDF::loadView('pdf.cargo-receipt', compact('transaction'));
@@ -315,7 +259,7 @@ class CargoTransactionController extends Controller
 
         // Check if the file exists
         if (!file_exists($filePath)) {
-            abort(404);
+            abort(HTTP_NOT_FOUND);
         }
 
         // Return the PDF file as a stream response
