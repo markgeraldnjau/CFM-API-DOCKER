@@ -33,7 +33,7 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $request->validate([
-            'card_number' => 'required|string',
+            'card_number' => 'required|string|strip_tag',
             'app_pin' => 'required|string',
         ]);
 
@@ -59,7 +59,6 @@ class AuthController extends Controller
                     'message' => $message,
                 ];
                 event(new SendMail(TOO_MANY_LOGIN_ATTEMPTS, $payload));
-                return $this->sendLockoutResponse($customer);
             }
 
             if (Hash::check($pin, $customer->app_pin)) {
@@ -101,10 +100,11 @@ class AuthController extends Controller
                 return $this->sendFailedLoginResponse();
             }
         } catch (\Exception $e) {
+            dd($e);
             Log::channel('customer')->error($e);
             Log::channel('customer')->error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
-            $errorMessage = $e->getMessage() ?? 'SERVER_ERROR';
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
+            $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }

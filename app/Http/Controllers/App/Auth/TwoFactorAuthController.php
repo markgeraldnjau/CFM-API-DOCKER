@@ -4,6 +4,7 @@ namespace App\Http\Controllers\App\Auth;
 
 use App\Exceptions\RestApiException;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\ConfirmOTPRequest;
 use App\Models\CardCustomer;
 use App\Models\OTP;
 use App\Traits\ApiResponse;
@@ -24,7 +25,7 @@ class TwoFactorAuthController extends Controller
 {
     use ApiResponse, AuthTrait, MobileAppTrait, JwtTrait, CommonTrait, FireBaseTrait;
 
-    public function confirm(Request $request)
+    public function confirm(ConfirmOTPRequest $request)
     {
         $response = $this->getCustomerByJwtToken($request);
         if (!$response['status']){
@@ -33,21 +34,13 @@ class TwoFactorAuthController extends Controller
 
         $customer = $response['data'];
 
-        $validator = Validator::make($request->all(), [
-            'code' => 'required',
-            'fb_device_token' => 'required',
-        ]);
-
-        if ($validator->fails()) {
-            return $this->error(null, "Verification Code is invalid!", 401);
-        }
-
         DB::beginTransaction();
         try {
 
             $code = $request->code;
 
             $otp = OTP::where('user_id', $customer->id)
+                ->select('id', 'otpcode', 'operator', 'device', 'status', 'created_at', 'updated_at', 'user_type', 'user_id')
                 ->where('user_type', get_class($customer))
                 ->first();
 
@@ -56,25 +49,25 @@ class TwoFactorAuthController extends Controller
             if ($otp == null) {
                 $updateTwoFactorAuth->two_fa_auth = true;
                 $updateTwoFactorAuth->save();
-                return $this->error(null, "Otp code supplied does not exits!", 404);
+                return $this->error(null, "Otp code supplied does not exits!", HTTP_NOT_FOUND);
             }
 
             if (!Hash::check($code, $otp->otpcode)) {
                 $updateTwoFactorAuth->two_fa_auth = true;
                 $updateTwoFactorAuth->save();
-                return $this->error(null, "Invalid otp code supplied!", 401);
+                return $this->error(null, "Invalid otp code supplied!", HTTP_UNAUTHORIZED);
             }
 
             if ($otp->isUsed()) {
                 $updateTwoFactorAuth->two_fa_auth = true;
                 $updateTwoFactorAuth->save();
-                return $this->error(null, "Otp code has already used!", 401);
+                return $this->error(null, "Otp code has already used!", HTTP_UNAUTHORIZED);
             }
 
             if ($otp->isExpired()) {
                 $updateTwoFactorAuth->two_fa_auth = true;
                 $updateTwoFactorAuth->save();
-                return $this->error(null, "Otp code has already expired!", 404);
+                return $this->error(null, "Otp code has already expired!", HTTP_NOT_FOUND);
             }
 
             $otp->status = USED_OTP;
@@ -88,7 +81,7 @@ class TwoFactorAuthController extends Controller
                 $deviceToken = $request->fb_device_token ?? Str::random(20);
                 $saveFireBaseDeviceToken = $this->saveFireBaseDevice($customer, $customer->phone, $deviceToken);
                 if (!$saveFireBaseDeviceToken){
-                    return $this->error(null, "Something went wrong on saving Firebase Device Token", 500);
+                    return $this->error(null, "Something went wrong on saving Firebase Device Token", HTTP_INTERNAL_SERVER_ERROR);
                 }
             }
 
@@ -104,7 +97,7 @@ class TwoFactorAuthController extends Controller
         } catch (\Exception $e){
             DB::rollBack();
             Log::channel('customer')->error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -136,7 +129,7 @@ class TwoFactorAuthController extends Controller
 
         } catch (\Exception $e){
             Log::channel('customer')->error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -154,7 +147,7 @@ class TwoFactorAuthController extends Controller
             return $this->success(null, "Successfully logged out");
         } catch (\Exception $e){
             Log::channel('customer')->error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -177,24 +170,24 @@ class TwoFactorAuthController extends Controller
             ]);
 
             if ($validator->fails()) {
-                return $this->error($validator->errors(), "Validation error!", 422);
+                return $this->error($validator->errors(), "Validation error!", HTTP_UNPROCESSABLE_ENTITY);
             }
 
 
             if ($request->old_pin === $request->new_pin) {
-                return $this->error(null, "The provided old PIN can not be the same to the new PIN", 422);
+                return $this->error(null, "The provided old PIN can not be the same to the new PIN", HTTP_UNPROCESSABLE_ENTITY);
 
             }
 
             // Check if the provided old PIN matches the stored PIN
             if (!Hash::check($request->input('old_pin'), $customer->app_pin)) {
-                return $this->error(null, "The provided old PIN is incorrect.", 422);
+                return $this->error(null, "The provided old PIN is incorrect.", HTTP_UNPROCESSABLE_ENTITY);
 
             }
 
             // Manually check if the new_pin and confirm_pin match
             if ($request->new_pin !== $request->confirm_pin) {
-                return $this->error(null, "PIN confirmation does not match.", 422);
+                return $this->error(null, "PIN confirmation does not match.", HTTP_UNPROCESSABLE_ENTITY);
             }
 
             $customer->app_pin = Hash::make($request->new_pin);
@@ -213,7 +206,7 @@ class TwoFactorAuthController extends Controller
         } catch (\Exception $e){
 
             Log::channel('customer')->error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
