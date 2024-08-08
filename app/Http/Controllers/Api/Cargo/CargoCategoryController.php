@@ -10,19 +10,33 @@ use App\Models\Cargo\CargoCategory;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\checkAuthPermsissionTrait;
+use App\Traits\CommonTrait;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class CargoCategoryController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait;
+    use ApiResponse, AuditTrail, checkAuthPermsissionTrait, CommonTrait;
     /**
      * Display a listing of the resource.
      */
     public function index(Request $request)
     {
+
+        $validator = Validator::make($request->all(), [
+            'search_query' => ['nullable', 'string', 'max:255'],
+            'item_per_page' => ['nullable', 'numeric', 'max:255'],
+        ]);
+
+        if ($validator->fails()) {
+            $errors = implode(', ', $validator->errors()->all());
+            return $this->error(null, $errors, HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+
         $searchQuery = $request->input('search_query');
         $itemPerPage = $request->input('item_per_page', 10);
         //
@@ -41,7 +55,7 @@ class CargoCategoryController extends Controller
             $this->auditLog("View Cargo Categories", PORTAL, null, null);
             return $this->success($cargoCategories, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
@@ -52,26 +66,13 @@ class CargoCategoryController extends Controller
     {
         try {
             $cargoCustomers = CargoCategory::select('id', 'code', 'name')->whereNot('code', '0')->get();
-
-//            if (!$cargoCustomers) {
-//                return $this->error(404, 'No default cargo categories found!');
-//            }
-
             return $this->success($cargoCustomers, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
-    }
-
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
     }
 
     /**
@@ -91,7 +92,7 @@ class CargoCategoryController extends Controller
             DB::commit();
             return $this->success($category, DATA_SAVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
             throw new RestApiException(500);
         }
@@ -101,11 +102,11 @@ class CargoCategoryController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(string $token)
     {
         //
         try {
-            $category = CargoCategory::findOrFail($id);
+            $category = CargoCategory::where("token", $token)->first();
 
             if (!$category) {
                 return $this->error(null, 'No cargo category found!', 404);
@@ -116,10 +117,10 @@ class CargoCategoryController extends Controller
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             throw new RestApiException(404, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
@@ -127,23 +128,17 @@ class CargoCategoryController extends Controller
     }
 
     /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
-
-    /**
      * Update the specified resource in storage.
      */
-    public function update(UpdateCargoCategoryRequest $request, string $categoryId)
+    public function update(UpdateCargoCategoryRequest $request, string $token)
     {
-        //
+        $category = CargoCategory::query()
+            ->where('token', $token)
+            ->firstOrFail();
+
+        $oldData = clone $category;
         DB::beginTransaction();
         try {
-            $category = CargoCategory::findOrFail($categoryId);
-            $oldData = clone $category;
             $payload = [
                 'name' => $request->name,
             ];
@@ -155,10 +150,10 @@ class CargoCategoryController extends Controller
             DB::commit();
             return $this->success($category, DATA_UPDATED);
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             throw new RestApiException(404, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
             throw new RestApiException(500);
         }
@@ -167,10 +162,9 @@ class CargoCategoryController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $id){
-        //
+    public function destroy(string $token){
         try {
-            $category = CargoCategory::findOrFail($id);
+            $category = CargoCategory::where("token", $token)->firstOrFail();
 
             if ($category->cargoTransactionItems->count()){
                 return $this->error(null, RELATED_DATA_ERROR);
@@ -184,7 +178,7 @@ class CargoCategoryController extends Controller
             Log::error($e->getMessage());
             throw new RestApiException(404, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
