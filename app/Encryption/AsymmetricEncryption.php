@@ -14,7 +14,7 @@ class AsymmetricEncryption
         Log::info("info",["privateKeyPath: " => $privateKeyPath]);
         $privateKey = openssl_pkey_get_private(file_get_contents($privateKeyPath));
         openssl_private_decrypt(base64_decode($encryptedData), $decryptedData, $privateKey);
-        Log::info("error",["encryptedData: " => $decryptedData]);
+        Log::info("info",["decryptedData: " => $decryptedData]);
         return $decryptedData;
     }
 

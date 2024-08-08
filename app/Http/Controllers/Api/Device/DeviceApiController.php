@@ -159,76 +159,85 @@ class DeviceApiController extends Controller
     }
 
 
+    /**
+     * Created By : Gabriel R Assenga
+     * On : 01/08/2024
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     *
+     */
     public function splash(Request $request){
+
         $request->validate([
-            'data' =>'required',
+            'data' => 'required',
         ]);
-        //$this->logger->log($request->data);
-        FacadesLog::info(["DATA" =>$request->data]);
-//        $decodedJson = $this->decryptAsymmetric($request->data);
-        $decodedJson = AsymmetricEncryption::decryptAsymmetric($request->data);
-        FacadesLog::info(["DecodedJosn" =>$decodedJson]);
-        $outerArray = json_decode($decodedJson);
-        $privateKey = $outerArray->key;
-        $imei1 = $outerArray->field_68;
-        $androidId = $outerArray->androidId;
-        $errorMessage = (object) null;
-        $getkeyIfExist=FacadesDB::table('keys')->select('id')
-            ->where("android_id", $androidId)->first();
-        FacadesLog::info([$getkeyIfExist]);
-        if($getkeyIfExist){
-            $updateExistKey = FacadesDB::table('keys')
-                ->where('id',$getkeyIfExist->id)
-                ->update([
-                    'key' => $privateKey,
-                    'imei_1'=> $imei1,
-                    'imei_2'=> $imei1,
-                    'updated_at' => now(),
-                ]);
-            if($updateExistKey > 0){
-                FacadesLog::info("KeyUpdated" , [ "message"=> "Key Updated Succesfully"  ,"Result" =>$updateExistKey]);
-            }else{
-                FacadesLog::info("KeyUpdated" , [ "message"=> "Fail To Update Key"  ,"Result" =>$updateExistKey]);
-                $errorMessage->message = "Fail To Update Key";
-                return response()->json($errorMessage);
+        $responsePayload = (object)null;
+        $lastResponse = (object)null;
+        try {
+            FacadesLog::info("data", ["encryptedData" => $request->data]);
+            $decryptedJson = AsymmetricEncryption::decryptAsymmetric($request->data);
+            FacadesLog::info("data", ["decryptedJson" => $decryptedJson]);
+            $outerArray = json_decode($decryptedJson);
+            $privateKey = $outerArray->key;
+            $imei1 = $outerArray->field_68;
+            $androidId = $outerArray->androidId;
+            $errorMessage = (object)null;
+            $getKeyIfExist = FacadesDB::table('keys')->select('id')
+                ->where("android_id", $androidId)->first();
+            if ($getKeyIfExist) {
+                $updateExistKey = FacadesDB::table('keys')
+                    ->where('id', $getKeyIfExist->id)
+                    ->update([
+                        'key' => $privateKey,
+                        'imei_1' => $imei1,
+                        'imei_2' => $imei1,
+                        'updated_at' => now(),
+                    ]);
+                if ($updateExistKey > 0) {
+                    FacadesLog::info("KeyUpdated", ["message" => "Key Updated Successfully", "Result" => $updateExistKey]);
+                } else {
+                    FacadesLog::info("KeyUpdated", ["message" => "Fail To Update Key", "Result" => $updateExistKey]);
+                    $errorMessage->message = "Fail To Update Key";
+                    return response()->json($errorMessage);
+                }
+
+            } else {
+                $insertNewKey = FacadesDB::table('keys')
+                    ->insert([
+                        'android_id' => $androidId,
+                        'key' => $privateKey,
+                        'imei_1' => $imei1,
+                        'imei_2' => $imei1,
+                        'created_at' => now(),
+                        'updated_at' => now()
+                    ]);
+
+                if ($insertNewKey > 0) {
+                    FacadesLog::info("KeyUpdated", ["message" => "Key Inserted Successfully", "Result" => $insertNewKey]);
+                } else {
+                    FacadesLog::info("KeyUpdated", ["message" => "Fail To Insert Key", "Result" => $insertNewKey]);
+                    $errorMessage->message = "Fail To Insert Key";
+                    return response()->json($errorMessage);
+                }
+
             }
-
-        }else{
-            $insertNewKey = FacadesDB::table('keys')
-                ->insert([
-                    'android_id' => $androidId,
-                    'key' => $privateKey,
-                    'imei_1'=> $imei1,
-                    'imei_2'=> $imei1,
-                    'created_at' => now(),
-                    'updated_at' => now()
-                ]);
-
-            if($insertNewKey > 0){
-                FacadesLog::info("KeyUpdated" , [ "message"=> "Key Inserted Succesfully"  ,"Result" =>$insertNewKey]);
-            }else{
-                FacadesLog::info("KeyUpdated" , [ "message"=> "Fail To Insert Key"  ,"Result" =>$insertNewKey]);
-                $errorMessage->message = "Fail To Insert Key";
-                return response()->json($errorMessage);
-            }
-
+            $responsePayload->message = "Successfully";
+            $responsePayload->response_code = \HttpResponseCode::SUCCESS;
+            FacadesLog::info("payload", ["payload" => $responsePayload]);
+            $res = EncryptionHelper::encrypt(json_encode($responsePayload), $privateKey);
+            FacadesLog::info("encryptedPayload", ["encryptedPayload" => $res]);
+            $lastResponse->data = $res;
+            return response()->json($lastResponse);
+        }catch (Exception $e){
+            FacadesLog::error("EXCEPTION", [ "MESSAGE"=> "CAUGHT-ON-CATCH" ,"ERROR" => $e]);
+            $responsePayload->message = "Failed, Contact System Administrator";
+            $responsePayload->response_code = \HttpResponseCode::INTERNAL_SERVER_ERROR;
+//            $res = EncryptionHelper::encrypt(json_encode($responsePayload), $privateKey);
+            $res =  AsymmetricEncryption::encryptAsymmetric($responsePayload);
+            FacadesLog::info("encryptedPayload", ["encryptedPayload" => $res]);
+            $lastResponse->data = $res;
+            return response()->json($lastResponse);
         }
-
-        $majibu = (object) null;
-        $majibu->success = "Successfully";
-        $majibu->code = 200;
-        FacadesLog::info(["Majibu" =>$majibu]);
-//        $res = $this->encrypt(json_encode($majibu), $privateKey);
-        $res = EncryptionHelper::encrypt(json_encode($majibu), $privateKey);
-        FacadesLog::info(["EncryptedData" =>$res]);
-
-
-        // data was successfully decrypted up to this point
-        $last = (object) null;
-        $last->data = $res;
-
-
-        return response()->json($last);
     }
     public function otp_verification(Request $request){
         $msg = null;
@@ -376,15 +385,15 @@ class DeviceApiController extends Controller
         $responseObject = (object) null;
         $this->msg = $request;
         try {
-        $sql = "SELECT train_id,wagons.id as wagoon_id,serial_number,class_id,`number`,manufacture_id FROM `wagons`
+            $sql = "SELECT train_id,wagons.id as wagoon_id,serial_number,class_id,`number`,manufacture_id FROM `wagons`
          INNER JOIN train_wagons ON train_wagons.wagon_id=wagons.id
          INNER JOIN train_layouts ON train_layouts.id = train_wagons.train_layout_id
          INNER JOIN wagon_layouts ON wagon_layouts.id=wagons.layout_id
          INNER JOIN seats ON seats.wagon_layout_id=wagons.layout_id
          WHERE train_id=:id";
-        $id = $this->msg['id'];
-        $data = [ 'id'=>  $id];
-        $result = $this->db_select($sql,$data);
+            $id = $this->msg['id'];
+            $data = [ 'id'=>  $id];
+            $result = $this->db_select($sql,$data);
 
             $this->msg['train_layout'] = ['code' => "200",'status' => "success"
                 ,'message' => "Success",'data' => $result];
@@ -419,21 +428,21 @@ class DeviceApiController extends Controller
         $dataPayload = (object)null;
         $responseObject = (object) null;
         try {
-        $sql = "SELECT * FROM ticket_transactions
+            $sql = "SELECT * FROM ticket_transactions
          WHERE card_number=:card_number";
-        $card_number = $this->msg['card_number'];
-        $data = [ 'card_number'=>  $card_number];
-        $result = $this->db_select($sql,$data);
+            $card_number = $this->msg['card_number'];
+            $data = [ 'card_number'=>  $card_number];
+            $result = $this->db_select($sql,$data);
 
 
             $this->msg['card_transactions'] = $result;
 
-        $responseObject->message = "";
-        $responseObject->response_code = \HttpResponseCode::SUCCESS;
-        $responseObject->msg = $this->msg['card_transactions'];
-        $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
-        $dataPayload->data = $encryptedResponse;
-        return response()->json($dataPayload);
+            $responseObject->message = "";
+            $responseObject->response_code = \HttpResponseCode::SUCCESS;
+            $responseObject->msg = $this->msg['card_transactions'];
+            $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
+            $dataPayload->data = $encryptedResponse;
+            return response()->json($dataPayload);
 
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
@@ -458,10 +467,10 @@ class DeviceApiController extends Controller
         $responseObject = (object) null;
 
         try {
-        $sql = "SELECT * FROM customer_account_package_types where send_device_option = :send_device_option";
-        $send_device_option = "1";
-        $data = [ 'send_device_option'=>  $send_device_option];
-        $result = $this->db_select($sql,$data);
+            $sql = "SELECT * FROM customer_account_package_types where send_device_option = :send_device_option";
+            $send_device_option = "1";
+            $data = [ 'send_device_option'=>  $send_device_option];
+            $result = $this->db_select($sql,$data);
 
             $this->msg['packages'] = $result;
 
@@ -548,10 +557,10 @@ class DeviceApiController extends Controller
         $dataPayload = (object)null;
         $responseObject = (object) null;
         try {
-        $username = $this->msg['username'];
-        $sql = "SELECT * FROM users where username = :username";
-        $data = [ 'username'=>  $username];
-        $result = $this->db_select($sql,$data);
+            $username = $this->msg['username'];
+            $sql = "SELECT * FROM users where username = :username";
+            $data = [ 'username'=>  $username];
+            $result = $this->db_select($sql,$data);
             $this->msg['response'] = ['code' => "200",'status' => "success"
                 ,'message' => "Success",'token' => $result[0]->token,'data' => ["message"=>"Registado com sucesso"]];
 
@@ -589,14 +598,14 @@ class DeviceApiController extends Controller
         $to_date = $this->msg['end_date'];
 
         try {
-        $sql = "SELECT * FROM users where token = :token";
-        $data = [ 'token'=>  $token];
-        $result = $this->db_select($sql,$data);
-        if(!empty($result[0]->username)){
-            $sql = "SELECT * FROM ticket_transactions where trnx_date >= :from_date AND trnx_date <= :to_date";
-            $data = [ 'from_date'=>  $from_date,'to_date'=>  $to_date ];
-            $transactions = $this->db_select($sql,$data);
-        }
+            $sql = "SELECT * FROM users where token = :token";
+            $data = [ 'token'=>  $token];
+            $result = $this->db_select($sql,$data);
+            if(!empty($result[0]->username)){
+                $sql = "SELECT * FROM ticket_transactions where trnx_date >= :from_date AND trnx_date <= :to_date";
+                $data = [ 'from_date'=>  $from_date,'to_date'=>  $to_date ];
+                $transactions = $this->db_select($sql,$data);
+            }
             $this->msg['response'] = ['code' => "200",'status' => "success"
                 ,'message' => "Success",'transactions' => $transactions,'data' => ["message"=>"Registado com sucesso"]];
             $responseObject->message = "";
@@ -632,14 +641,14 @@ class DeviceApiController extends Controller
         $from_date = $this->msg['from_date'];
         $to_date = $this->msg['end_date'];
         try {
-        $sql = "SELECT * FROM users where token = :token";
-        $data = [ 'token'=>  $token];
-        $result = $this->db_select($sql,$data);
-        if(!empty($result[0]->username)){
-            $sql = "SELECT * FROM tbl_weight_transactions where trnx_date >= :from_date AND trnx_date <= :to_date";
-            $data = [ 'from_date'=>  $from_date,'to_date'=>  $to_date ];
-            $transactions = $this->db_select($sql,$data);
-        }
+            $sql = "SELECT * FROM users where token = :token";
+            $data = [ 'token'=>  $token];
+            $result = $this->db_select($sql,$data);
+            if(!empty($result[0]->username)){
+                $sql = "SELECT * FROM tbl_weight_transactions where trnx_date >= :from_date AND trnx_date <= :to_date";
+                $data = [ 'from_date'=>  $from_date,'to_date'=>  $to_date ];
+                $transactions = $this->db_select($sql,$data);
+            }
 
 
             $this->msg['response'] = ['code' => "200",'status' => "success"
@@ -678,17 +687,17 @@ class DeviceApiController extends Controller
         $sql = "SELECT * FROM users where token = :token";
         $data = [ 'token'=>  $token];
         try {
-        $result = $this->db_select($sql,$data);
-        if(!empty($result[0]->username)){
-            $sql = "SELECT operators.id,operators.full_name,device_imei,train_id,trains.train_number,total_tickets,total_amount,summary_date_time,
+            $result = $this->db_select($sql,$data);
+            if(!empty($result[0]->username)){
+                $sql = "SELECT operators.id,operators.full_name,device_imei,train_id,trains.train_number,total_tickets,total_amount,summary_date_time,
             STR_TO_DATE(summary_date_time, '%d%m%y%H%i%s') AS formatted_date
             FROM `device_summary_receipts`
             INNER JOIN operators ON operators.id = device_summary_receipts.operator_id
             INNER JOIN trains ON trains.id = device_summary_receipts.train_id
             WHERE STR_TO_DATE(summary_date_time, '%d%m%y') =:currentdate ORDER BY device_summary_receipts.id DESC";
-            $data = [ 'currentdate'=>  $date ];
-            $transactions = $this->db_select($sql,$data);
-        }
+                $data = [ 'currentdate'=>  $date ];
+                $transactions = $this->db_select($sql,$data);
+            }
 
 
             $this->msg['response'] = ['code' => "200",'status' => "success"
