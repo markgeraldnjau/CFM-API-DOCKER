@@ -11,14 +11,16 @@ use App\Models\Cargo\CargoCustomer;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\checkAuthPermsissionTrait;
+use App\Traits\CommonTrait;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class CargoCustomerController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait;
+    use ApiResponse, AuditTrail, checkAuthPermsissionTrait, CommonTrait;
 
     /**
      * Display a listing of the resource.
@@ -26,6 +28,17 @@ class CargoCustomerController extends Controller
      */
     public function index(Request $request)
     {
+        $validator = Validator::make($request->all(), [
+            'search_query' => ['nullable', 'string', 'max:255'],
+            'item_per_page' => ['nullable', 'numeric', 'max:255'],
+            'status' => ['nullable', 'numeric', 'max:10'],
+        ]);
+
+        if ($validator->fails()) {
+            $errors = implode(', ', $validator->errors()->all());
+            return $this->error(null, $errors, 422);
+        }
+
         $this->checkPermissionFn($request, VIEW);
 
         $status = $request->input('status');
@@ -35,6 +48,7 @@ class CargoCustomerController extends Controller
         try {
             $query = DB::table('cargo_customers as cc')->select(
                 'cc.id',
+                'cc.token',
                 'cc.name',
                 'cc.address',
                 'cc.customer_number',
@@ -80,20 +94,11 @@ class CargoCustomerController extends Controller
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
-    }
-
-
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
     }
 
     /**
@@ -122,7 +127,7 @@ class CargoCustomerController extends Controller
             DB::commit();
             return $this->success($customer, DATA_SAVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
             throw new RestApiException(500);
         }
@@ -131,12 +136,13 @@ class CargoCustomerController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(string $token)
     {
         //
         try {
-            $cargoCustomer = CargoCustomer::find($id, [
+            $cargoCustomer = CargoCustomer::select(
                 'id',
+                'token',
                 'name',
                 'address',
                 'customer_number',
@@ -150,7 +156,7 @@ class CargoCustomerController extends Controller
                 'service_type',
                 'created_at',
                 'updated_at'
-            ]);
+            )->where('token', $token)->first();
 
             if (!$cargoCustomer) {
                 throw new RestApiException(404, 'No cargo customer found!');
@@ -162,31 +168,22 @@ class CargoCustomerController extends Controller
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
-
     /**
      * Update the specified resource in storage.
      */
-    public function update(UpdateCargoCustomerRequest $request, string $customerId)
+    public function update(UpdateCargoCustomerRequest $request, string $token)
     {
         //
+        $customer = CargoCustomer::where('token', $token)->first();
+        $oldData = clone $customer;
         DB::beginTransaction();
         try {
-            $customer = CargoCustomer::findOrFail($customerId);
-            $oldData = clone $customer;
             $payload = [
                 'name' => $request->name,
                 'phone' => $request->phone,
@@ -209,8 +206,7 @@ class CargoCustomerController extends Controller
             Log::error($e->getMessage());
             throw new RestApiException(404, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
             throw new RestApiException(500);
         }
@@ -218,10 +214,9 @@ class CargoCustomerController extends Controller
 
     public function changeStatus(UpdateCargoCustomerStatusRequest $request)
     {
-
         try {
-            $customer = CargoCustomer::find($request->id);
-            $oldData = $customer;
+            $customer = CargoCustomer::where('token', $request->token)->firstOrFail();
+            $oldData = clone $customer;
 
             if (!$customer) {
                 throw new RestApiException(404, 'No cargo customer found!');
@@ -231,23 +226,19 @@ class CargoCustomerController extends Controller
             $customer->status = $newStatus;
             $customer->save();
 
+            if (!$customer){
+                return $this->error(null, "Unable to save customer status");
+            }
 
             $this->auditLog("Change status for Cargo Customer: ". $customer->name, PORTAL, $oldData, $customer);
 
             return $this->success($customer, DATA_UPDATED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
-    }
 }
