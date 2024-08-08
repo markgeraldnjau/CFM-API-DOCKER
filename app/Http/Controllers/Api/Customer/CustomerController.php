@@ -4,16 +4,18 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\CardCustomer;
-use App\Models\Device;
 use App\Traits\ApiResponse;
+use App\Traits\CommonTrait;
 use App\Traits\Mobile\MobileAppTrait;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
+
 class CustomerController extends Controller
 {
-    use ApiResponse;
+    use ApiResponse, CommonTrait;
+
     /**
      * Display a listing of the resource.
      *
@@ -22,25 +24,37 @@ class CustomerController extends Controller
     public function index(Request $request)
     {
 
-        $searchQuery = $request->search_query;
-        $query = CardCustomer::select('card_customers.*',  'cards.card_number','special_groups.title')
-            ->leftJoin('customer_cards', 'customer_cards.customer_id', '=', 'card_customers.id')
-            ->leftJoin('cards', 'cards.id', '=', 'customer_cards.card_id')
-            ->leftJoin('special_groups', 'special_groups.id', '=', 'card_customers.special_group_id');
+        $validator = validator($request->all(), [
+            'items_per_page' => "nullable|numeric"
+        ]);
+
+
+        $searchQuery = $request->input('search_query');
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $query = CardCustomer::select('card_customers.*', 'cards.card_number', 'special_groups.title')
+            ->join('customer_cards', 'customer_cards.customer_id', '=', 'card_customers.id')
+            ->join('cards', 'cards.id', '=', 'customer_cards.card_id')
+            ->join('special_groups', 'special_groups.id', '=', 'card_customers.special_group_id');
 
         if (!empty($searchQuery)) {
             $query->where(function ($query) use ($searchQuery) {
                 $query->where('card_customers.full_name', 'like', "%$searchQuery%")
-                    ->orWhere('card_customers.first_name', 'like', "%$searchQuery%")
-                    ->orWhere('card_customers.middle_name', 'like', "%$searchQuery%")
-                    ->orWhere('card_customers.last_name', 'like', "%$searchQuery%")
-                    ->orWhere('card_customers.identification_number', 'like', "%$searchQuery%");
+                    ->orWhere('cards.card_number', 'like', "%$searchQuery%")
+                    ->orWhere('card_customers.identification_number', 'like', "%$searchQuery%")
+                    ->orWhere('card_customers.phone', 'like', "%$searchQuery%");
             });
         }
-
         $customers = $query->orderBy('card_customers.id', 'DESC')->paginate($request->items_per_page);
 
-        return response()->json($customers, 200);
+        return response()->json($customers, HTTP_OK);
     }
 
     /**
@@ -53,24 +67,24 @@ class CustomerController extends Controller
     {
 
         $validatedData = validator($request->all(), [
-            'first_name' => 'required',
-            'middle_name' => 'required',
-            'last_name' => 'required',
-            'gender' => 'required',
-            'birthdate' => 'required',
-            'category' => 'required',
-            'identification_number' => 'required',
-            'identification_type' => 'required',
-            'phone' => 'required',
-            'address' => 'required',
-
+            'first_name' => 'required|string|max:50',
+            'middle_name' => 'required|string|max:30',
+            'last_name' => 'required|string|max:50',
+            'identification_number' => 'required|string|max:100',
+            'identification_type' => 'required|integer',
+            'employee_id' => 'nullable|string|max:25',
+            'gender_id' => 'required|exists:genders,id',
+            'phone' => 'required|string|max:20',
+            'email' => 'nullable|email|max:40',
+            'address' => 'required|string|max:50',
+            'birthdate' => 'required|date',
         ]);
         if ($validatedData->fails()) {
             return response()->json([
                 'status' => VALIDATION_ERROR,
                 'message' => VALIDATION_FAIL,
                 'errors' => $validatedData->errors()
-            ], 422);
+            ], HTTP_UNPROCESSABLE_ENTITY);
         }
 
         DB::beginTransaction();
@@ -92,11 +106,11 @@ class CustomerController extends Controller
             $customer->save();
             DB::commit();
 
-            return response()->json(['status' => 'success', 'message' => DATA_SAVED], 201);
+            return response()->json(['status' => 'success', 'message' => DATA_SAVED], HTTP_CREATED);
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::info($e->getMessage());
-            return response()->json(['status' => 'failed', 'message' => 'Failed to create customer'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['status' => 'failed', 'message' => 'Failed to create customer'], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -109,7 +123,13 @@ class CustomerController extends Controller
      */
     public function show($id)
     {
-        //        return $this->getCustomerDetailsByCustomerId($id);
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         $customer = CardCustomer::select(
             'card_customers.*',
             'cards.card_number',
@@ -123,9 +143,9 @@ class CustomerController extends Controller
             ->where('card_customers.id', $id)->first();
 
         if (empty($customer)) {
-            return response()->json(['message' => 'Customer not found'], 404);
+            return response()->json(['message' => NOT_FOUND], HTTP_NOT_FOUND);
         }
-        return response()->json($customer, 200);
+        return response()->json($customer, HTTP_OK);
     }
 
     /**
@@ -137,28 +157,33 @@ class CustomerController extends Controller
      */
     public function update(Request $request, $id, )
     {
-        // $validatedData = $request->validate([
-        //     'first_name' => 'required',
-        //     'middle_name' => 'required',
-        //     'last_name' => 'required',
-        //     'gender' => 'required',
-        //     'birthdate' => 'required',
-        //     'category' => 'required',
-        //     'identification_number' => 'required',
-        //     'identification_type' => 'required',
-        //     'phone' => 'required',
-        //     'address' => 'required',
-        //     'passportImage' => 'required',
-        //     'image' => 'required',
-        // ]);
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], 400);
+        }
+        $validator = validator($request->all(), [
+            'first_name' => 'required|string|max:255',
+            'middle_name' => 'nullable|string|max:255',
+            'last_name' => 'required|string|max:255',
+            'identification' => 'required|string|max:100',
+        ]);
 
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $customer = CardCustomer::find($id);
+        if (!$customer) {
+            return response()->json(['status' => 'failed', 'message' => NOT_FOUND], HTTP_NOT_FOUND);
+        }
         DB::beginTransaction();
-
         try {
-            $customer = CardCustomer::find($id);
-            if (!$customer) {
-                return response()->json(['status' => 'failed', 'message' => 'Customer not found'], 404);
-            }
             $customer->full_name = $request['first_name'] . ' ' . $request['middle_name'] . ' ' . $request['last_name'];
             $customer->first_name = $request['first_name'];
             $customer->middle_name = $request['middle_name'];
@@ -168,31 +193,45 @@ class CustomerController extends Controller
 
             DB::commit();
 
-            return response()->json(['status' => 'success', 'message' => 'Customer updated successfully'], 200);
+            return response()->json(['status' => 'success', 'message' => DATA_UPDATED], HTTP_OK);
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error($e->getMessage());
-            return response()->json(['status' => 'failed', 'message' => 'Failed to update customer ' . $e->getMessage()], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['status' => 'failed', 'message' => FAILED . $e->getMessage()], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
     public function customer_details(Request $request)
     {
+        $validator = validator($request->all(), [
+            'id' => 'required|integer',
+
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         $customers = CardCustomer::select(
             'card_customers.*',
             'card_customers.full_name as customer_name',
             'customer_cards.id as card_id',
             'cards.card_number as card_number',
-            'special_groups.title as special_group_title'
+            'special_groups.title as special_group_title',
+            'g.gender as gender_name'
         )
             ->join('customer_cards', 'customer_cards.customer_id', '=', 'card_customers.id')
             ->join('cards', 'cards.id', '=', 'customer_cards.card_id')
             ->join('special_groups', 'special_groups.id', '=', 'card_customers.special_group_id')
+            ->join('genders as g', 'g.id', 'card_customers.gender_id')
             ->where('card_customers.id', $request->id)
-            ->get();
+            ->first();
 
 
-        return response()->json($customers, 200);
+        return response()->json($customers, HTTP_OK);
     }
 
     /**
@@ -203,20 +242,26 @@ class CustomerController extends Controller
      */
     public function destroy($id)
     {
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], 400);
+        }
         DB::beginTransaction();
-
         try {
             $customer = CardCustomer::find($id);
             if (!$customer) {
-                return response()->json(['message' => 'Customer not found'], 404);
+                return response()->json(['message' => NOT_FOUND], HTTP_NOT_FOUND);
             }
             $customer->delete();
             DB::commit();
-            return response()->json(['message' => 'Customer deleted successfully'], 200);
+            return response()->json(['message' => DATA_DELETED], HTTP_OK);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to delete customer'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => FAILED], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 }

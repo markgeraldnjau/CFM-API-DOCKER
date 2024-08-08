@@ -12,16 +12,29 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use App\Traits\ApiResponse;
+use App\Traits\CommonTrait;
+
 
 class OperatorAllocationController extends Controller
 {
-    use ApiResponse, AuditTrail;
+    use ApiResponse, AuditTrail, CommonTrait;
+
     /**
      * Display a listing of the resource.
      */
     public function index(Request $request)
     {
+        $validator = validator($request->all(), [
+            "items_per_page" => "nullable|integer",
+        ]);
 
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         try {
             $operatorAllocations = OperatorAllocation::select(
                 'operator_allocations.*',
@@ -31,62 +44,82 @@ class OperatorAllocationController extends Controller
                 'wagon_layouts.normal_seats',
                 'wagon_layouts.standing_seats',
             )
-            ->join('operators', 'operators.id', '=', 'operator_allocations.operator_id')
-            ->join('trains', 'trains.id', '=', 'operator_allocations.train_id_asc')
-            ->join('wagons', 'wagons.id', '=', 'operator_allocations.wagon_id')
-            ->join('wagon_layouts', 'wagon_layouts.id', '=', 'wagons.layout_id')
-            ->paginate($request->items_per_page);
+                ->join('operators', 'operators.id', '=', 'operator_allocations.operator_id')
+                ->join('trains', 'trains.id', '=', 'operator_allocations.train_id_asc')
+                ->join('wagons', 'wagons.id', '=', 'operator_allocations.wagon_id')
+                ->join('wagon_layouts', 'wagon_layouts.id', '=', 'wagons.layout_id')
+                ->paginate($request->items_per_page);
 
             if (!$operatorAllocations) {
-                throw new RestApiException(404, 'No train station schedule times found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No train station schedule times found!');
             }
 
-            // return $this->success($trainLines, DATA_RETRIEVED);
             return response()->json($operatorAllocations);
-
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?: 500;
+            Log::error(json_encode($this->errorPayload($e)));
+
+            $statusCode = $e->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?: SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
-
-
     public function allocate_seat()
     {
-        //
 
         $trains = DB::select('SELECT train_id_asc FROM `operator_allocations` GROUP BY train_id_asc');
-        foreach ($trains as $train ) {
-            # code...
-            $train_id = $train->train_id_asc;
-            $totalseat = $this->getTotalSeat($train_id);
-            DB::update('update operator_allocations set seat = ? where train_id_asc = ?', [$totalseat,$train_id]);
-        }
+        DB::beginTransaction();
+        try {
+            foreach ($trains as $train) {
+                # code...
+                $train_id = $train->train_id_asc;
+                $totalseat = $this->getTotalSeat($train_id);
 
-        return response()->json(['status' => 'success', 'message' => 'Seat updated successfully'], 201);
+                DB::update('update operator_allocations set seat = ? where train_id_asc = ?', [$totalseat, $train_id]);
+            }
+
+            return response()->json(['status' => SUCCESS_RESPONSE, 'message' => DATA_UPDATED], HTTP_CREATED);
+
+        } catch (\Throwable $th) {
+            DB::rollBack();
+            Log::error(json_encode($this->errorPayload($th)));
+            return response()->json(['message' => FAILED], HTTP_INTERNAL_SERVER_ERROR);
+
+        }
 
 
     }
 
-    public function getTotalSeat($trainid){
+    public function getTotalSeat($trainid)
+    {
+        if (is_null($trainid) || !is_string($trainid)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         $total_seat = DB::table('train_layouts')->where('train_id', $trainid)->value('total_normal_seats');
-        return $total_seat ? $total_seat : 0;
+        return $total_seat ?? 0;
     }
     /**
      * Store a newly created resource in storage.
      */
     public function store(Request $request)
     {
+        $validator = validator($request->all(), [
+            'operator_id' => 'required|integer',
+            'train_id' => 'required|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $operator_id = $request->operator_id;
         $train_id = $request->train_id;
 
@@ -119,8 +152,8 @@ class OperatorAllocationController extends Controller
             }
         } catch (\Throwable $th) {
             DB::rollBack();
-            Log::error($th->getMessage());
-            return response()->json(['status' => 'fail', 'message' => $th->getMessage()], 200);
+            Log::error(json_encode($this->errorPayload($th)));
+            return response()->json(['status' => 'fail', 'message' => $th->getMessage()], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -128,9 +161,15 @@ class OperatorAllocationController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show($id)
     {
-//        dd($id);
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         try {
             $operatorAllocation = OperatorAllocation::select(
                 'operator_allocations.*',
@@ -144,7 +183,7 @@ class OperatorAllocationController extends Controller
                 'wagon_layouts.standing_seats',
                 'wagons.model as wagon_model_number',
                 'wagons.serial_number as wagon_serial_number',
-                )
+            )
                 ->join('operators', 'operators.id', '=', 'operator_allocations.operator_id')
                 ->join('trains', 'trains.id', '=', 'operator_allocations.train_id_asc')
                 ->join('wagons', 'wagons.id', '=', 'operator_allocations.wagon_id')
@@ -152,37 +191,53 @@ class OperatorAllocationController extends Controller
                 ->where('operator_allocations.id', $id)->first();
 
             if (empty($operatorAllocation)) {
-                return $this->error(null, "No operator allocation found!", 404);
+                return $this->error(null, "No operator allocation found!", HTTP_NOT_FOUND);
             }
 
-            $this->auditLog("View Operator Allocations: ". $operatorAllocation->full_name, PORTAL, null, null);
+            $this->auditLog("View Operator Allocations: " . $operatorAllocation->full_name, PORTAL, null, null);
             return $this->success($operatorAllocation, DATA_RETRIEVED);
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
 
     /**
      * Update the specified resource in storage.
      */
     public function update(UpdateOperatorAllocationRequest $request, $id)
     {
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
+
+        $validator = validator($request->all(), [
+            'operator_id' => 'required|integer',
+            'train_id' => 'required|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $operator_id = $request->operator_id;
         $train_id = $request->train_id;
 
@@ -224,16 +279,10 @@ class OperatorAllocationController extends Controller
             }
         } catch (\Throwable $th) {
             DB::rollBack();
-            Log::error($th->getMessage());
-            return response()->json(['status' => 'fail', 'message' => $th->getMessage()], 200);
+            Log::error(json_encode($this->errorPayload($th)));
+            return response()->json(['status' => 'fail', 'message' => $th->getMessage()], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
-    }
+
 }

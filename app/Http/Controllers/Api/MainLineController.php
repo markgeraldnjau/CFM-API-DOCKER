@@ -4,82 +4,59 @@ namespace App\Http\Controllers\Api;
 
 
 use App\Models\MainLine;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use App\Traits\ApiResponse;
 use App\Exceptions\RestApiException;
-use Log;
-use DB;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class MainLineController extends Controller
 {
 
-    use ApiResponse;
+    use ApiResponse, CommonTrait;
     /**
      * Display a listing of the resource.
      */
     /**
      * Display a listing of the resource.
      */
-    public function index(Request $request)
+    public function index()
     {
         //
         try {
-            // if (isset ($request->is_fetch_all)) {
-                $trainLines = MainLine::select('id', 'line_name','line_distance')->latest('id')->get();
-                Log::info($trainLines);
-            // } else {
-            //     $trainLines = MainLine::with([
-            //         'cfmRegion:id,region_code,region_name,number_line'
-            //     ])->select('id', 'line_code', 'line_name', 'line_distance', 'region_id')->latest('id')->paginate($request->items_per_page);
+            $trainLines = MainLine::select('id', 'line_name','line_distance')->latest('id')->get();
+            Log::info('TRAIN_MAIN_LINE',['TRAIN_LINE'=>$trainLines]);
 
-            //     // Check if any branches were found
-            //     if (!$trainLines) {
-            //         throw new RestApiException(404, 'No train line found!');
-            //     }
-            // }
-
-            // return $this->success($trainLines, DATA_RETRIEVED);
             return response()->json($trainLines);
-
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?: 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?: SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
 
     /**
      * Store a newly created resource in storage.
      */
     public function store(Request $request)
     {
-        Log::info($request->all());
         DB::beginTransaction();
         try {
             $trainLine = new MainLine();
             $trainLine->line_code = strtoupper($request->line_name);
             $trainLine->line_name = $request->line_name;
             $trainLine->line_distance = $request->line_distance;
-            // $trainLine->region_id = $request->cfm_region;
             $trainLine->save();
             DB::commit();
-            return response()->json(['status' => 'success', 'message' => 'Successfully Create New Train Line'], 200);
+            return response()->json(['status' => 'success', 'message' => 'Successfully Create New Train Line'], HTTP_OK);
         } catch (\Throwable $th) {
             DB::rollBack();
-            Log::error($th->getMessage());
-            //throw $th;
-            return response()->json(['status' =>  $request->line_name, 'message' => $th->getMessage()], 200);
-
+            Log::error(json_encode($this->errorPayload($th)));
+            return response()->json(['status' =>  $request->line_name, 'message' => $th->getMessage()], HTTP_OK);
         }
     }
 
@@ -93,48 +70,40 @@ class MainLineController extends Controller
             $trainLine = MainLine::findOrFail($id, ['id', 'line_code', 'line_name']);
 
             if (!$trainLine) {
-                throw new RestApiException(404, 'No train line found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No train line found!');
             }
             return $this->success($trainLine, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?: 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?: SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
 
     /**
      * Update the specified resource in storage.
      */
     public function update(Request $request, string $id)
     {
-        $trainLine = MainLine::find($id);
-        if ($trainLine) {
-            $trainLine->line_code = strtoupper($request->line_code);
-            $trainLine->line_name = $request->line_name;
-            $trainLine->line_distance = $request->line_distance;
-            // $trainLine->region_id = $request->cfm_region;
-            $trainLine->update();
-            return response()->json(['status' => 'success', 'message' => 'Successfully update Train Line'], 200);
-        } else {
-            return response()->json(['status' => 'failed', 'message' => 'Train Line not found'], 200);
+        try{
+            $trainLine = MainLine::find($id);
+            if ($trainLine) {
+                $trainLine->line_code = strtoupper($request->line_code);
+                $trainLine->line_name = $request->line_name;
+                $trainLine->line_distance = $request->line_distance;
+                $trainLine->update();
+                return response()->json(['status' => 'success', 'message' => 'Successfully update Train Line'], HTTP_OK);
+            } else {
+                return response()->json(['status' => 'failed', 'message' => 'Train Line not found'], HTTP_OK);
+            }
+        }catch (\Exception $e){
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
+            $errorMessage = $e->getMessage() ?: SERVER_ERROR;
+            throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
-    }
 }

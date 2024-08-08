@@ -7,13 +7,15 @@ use App\Http\Controllers\Controller;
 use App\Models\AuditTrail;
 use App\Traits\ApiResponse;
 use App\Traits\checkAuthPermsissionTrait;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class AuditTrailController extends Controller
 {
-    use ApiResponse, checkAuthPermsissionTrait;
+    use ApiResponse, checkAuthPermsissionTrait, CommonTrait;
 
     /**
      * Display a listing of the resource.
@@ -21,7 +23,15 @@ class AuditTrailController extends Controller
      */
     public function index(Request $request)
     {
-//        return $request->path();
+        $validator = Validator::make($request->all(), [
+            'search_query' => ['nullable', 'string', 'max:255'],
+            'item_per_page' => ['nullable', 'numeric', 'max:255'],
+        ]);
+
+        if ($validator->fails()) {
+            $errors = implode(', ', $validator->errors()->all());
+            return $this->error(null, $errors, HTTP_UNPROCESSABLE_ENTITY);
+        }
         $this->checkPermissionFn($request, VIEW);
 
         $searchQuery = $request->input('search_query');
@@ -43,32 +53,16 @@ class AuditTrailController extends Controller
             $auditTrails = $query->orderByDesc('at.updated_at')->paginate($itemPerPage);
 
             if (!$auditTrails) {
-                throw new RestApiException(404, 'No audit trail found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No audit trail found!');
             }
 
             return $this->success($auditTrails, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            $statusCode = $e->getCode() ?: 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?: SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
-    }
-
-
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
-
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
-    {
-        //
     }
 
     /**
@@ -83,34 +77,10 @@ class AuditTrailController extends Controller
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?: 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?: SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
     }
 }

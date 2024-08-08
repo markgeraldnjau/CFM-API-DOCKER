@@ -4,29 +4,23 @@ namespace App\Http\Controllers\Api\Train;
 
 use App\Exceptions\RestApiException;
 use App\Http\Controllers\Controller;
-use App\Http\Resources\UserResource;
-use App\Models\CardCustomer;
-use App\Models\Wagon;
 use App\Models\TrainWagonSetup;
-use App\Models\User;
 use App\Traits\ApiResponse;
-use http\Env\Response;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
 class TrainWagonSetupController extends Controller
 {
-    use ApiResponse;
+    use CommonTrait, ApiResponse;
     /**
      * Display a listing of the resource.
      *
      * @return AnonymousResourceCollection
      */
-    public function index(Request $request)
+    public function index()
     {
         try {
             $wagonSetups = TrainWagonSetup::select('train_wagon_setups.id', 't.train_Number as train_number', 'w.serial_number as wagon_name', 'train_wagon_setups.wagon_label')
@@ -35,23 +29,15 @@ class TrainWagonSetupController extends Controller
                 ->orderBy('id', 'desc')
                 ->get();
             return $this->success($wagonSetups, DATA_RETRIEVED);
-        }catch(\Exception $e) {
-            Log::error($e->getMessage());
+        } catch (\Exception $e) {
+            Log::error(json_encode($this->errorPayload($e)));
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     *
-     * @return \Illuminate\Http\Response
-     */
-    public function create()
-    {
-        //
-    }
+
 
     /**
      * Store a newly created resource in storage.
@@ -61,11 +47,19 @@ class TrainWagonSetupController extends Controller
      */
     public function store(Request $request)
     {
-        $validatedData = $request->validate([
-            'train_id' => 'required',
-            'wagon_id' => 'required',
-            'wagon_label' => 'required',
-        ]);
+        $rules = [
+            'train_id'      => 'required|exists:trains,id', // Must be an existing train ID
+            'wagon_id'      => 'required|exists:wagons,id', // Must be an existing wagon ID
+            'wagon_label'   => 'required|string|max:255', // Must be a string and have a maximum length of 255 characters
+        ];
+        $validatedData = validator($request->all(), $rules);
+        if ($validatedData->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validatedData->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         DB::beginTransaction();
         try {
@@ -75,10 +69,9 @@ class TrainWagonSetupController extends Controller
             $wagon->wagon_label = $validatedData['wagon_label'];
             $wagon->save();
             DB::commit();
-            return $this->success($wagon,DATA_SAVED);
+            return $this->success($wagon, DATA_SAVED);
         } catch (\Exception $e) {
-            dd($e);
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
@@ -86,16 +79,6 @@ class TrainWagonSetupController extends Controller
     }
 
 
-    /**
-     * Display the specified resource.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\Response
-     */
-    public function show($id)
-    {
-        //
-    }
 
     /**
      * Show the form for editing the specified resource.
@@ -105,11 +88,27 @@ class TrainWagonSetupController extends Controller
      */
     public function edit($id)
     {
-        $wagon = TrainWagonSetup::find($id);
-        if (!$wagon) {
-            return response()->json(['message' => 'wagon setup not found'], 404);
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], 400);
         }
-        return response()->json($wagon, 200);
+        $wagon = TrainWagonSetup::findOrFail($id);
+        try {
+            if (!$wagon) {
+                return response()->json(['message' => 'wagon setup not found'], 404);
+            }
+            return response()->json($wagon, 200);
+        } catch (\Throwable $th) {
+            Log::error(json_encode($this->errorPayload($th)));
+            $statusCode = $th->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
+            $errorMessage = $th->getMessage() ?: SERVER_ERROR;
+            throw new RestApiException($statusCode, $errorMessage);
+
+        }
+
     }
 
     /**
@@ -121,11 +120,26 @@ class TrainWagonSetupController extends Controller
      */
     public function update(Request $request, $id)
     {
-        $validatedData = $request->validate([
-            'train_id' => 'required',
-            'wagon_id' => 'required',
-            'wagon_label' => 'required',
-        ]);
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], 400);
+        }
+        $rules = [
+            'train_id'      => 'required|exists:trains,id', // Must be an existing train ID
+            'wagon_id'      => 'required|exists:wagons,id', // Must be an existing wagon ID
+            'wagon_label'   => 'required|string|max:255', // Must be a string and have a maximum length of 255 characters
+        ];
+        $validatedData = validator($request->all(), $rules);
+        if ($validatedData->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validatedData->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         DB::beginTransaction();
         try {
@@ -138,25 +152,14 @@ class TrainWagonSetupController extends Controller
             $wagon->wagon_id = $validatedData['wagon_id'];
             $wagon->wagon_label = $validatedData['wagon_label'];
             $wagon->save();
-
             DB::commit();
-
             return response()->json(['message' => 'Wagon updated successfully'], 201);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             return response()->json(['message' => 'Failed to update wagon'], 500);
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\Response
-     */
-    public function destroy($id)
-    {
-        //
-    }
+
 }

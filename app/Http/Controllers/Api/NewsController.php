@@ -10,6 +10,7 @@ use App\Models\NewsAndUpdate;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\checkAuthPermsissionTrait;
+use App\Traits\CommonTrait;
 use App\Traits\FireBaseTrait;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -22,7 +23,7 @@ use Illuminate\Validation\Rule;
 
 class NewsController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait, FireBaseTrait;
+    use ApiResponse, AuditTrail, checkAuthPermsissionTrait, FireBaseTrait, CommonTrait;
     /**
      * Display a listing of the resource.
      */
@@ -43,20 +44,14 @@ class NewsController extends Controller
               $this->auditLog("View News and Updates", PORTAL, null, null);
             return $this->success($news, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
 
-    }
 
     /**
      * Store a newly created resource in storage.
@@ -76,9 +71,9 @@ class NewsController extends Controller
             DB::commit();
             return $this->success($news, DATA_SAVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -100,33 +95,25 @@ class NewsController extends Controller
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             throw new RestApiException(404, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
 
     /**
      * Update the specified resource in storage.
      */
     public function update(NewsRequest $request, string $id)
     {
-        //
+        $news = NewsAndUpdate::findOrFail($id);
         DB::beginTransaction();
         try {
-            $news = NewsAndUpdate::findOrFail($id);
             $oldData = clone $news;
             $payload = [
                 'title' => $request->title,
@@ -141,12 +128,12 @@ class NewsController extends Controller
             DB::commit();
             return $this->success($news, DATA_UPDATED);
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -193,12 +180,12 @@ class NewsController extends Controller
             DB::commit();
             return $this->success($new, DATA_UPDATED);
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -219,11 +206,11 @@ class NewsController extends Controller
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }

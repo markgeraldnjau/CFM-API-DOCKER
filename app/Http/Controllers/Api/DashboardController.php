@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Exceptions\RestApiException;
 use App\Http\Controllers\Controller;
-use App\Models\CfmClass;
 use App\Traits\ApiResponse;
 use App\Traits\checkAuthPermsissionTrait;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -15,10 +15,21 @@ use Illuminate\Support\Facades\Log;
 
 class DashboardController extends Controller
 {
-    use ApiResponse;
+    use ApiResponse, CommonTrait;
     //
     public function getDashboardSummary(Request $request)
     {
+        $validator = validator($request->all(), [
+            'type' => 'required|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         try {
 
             $type = $request->type;
@@ -213,18 +224,6 @@ class DashboardController extends Controller
                 ->get();
 
 
-            // $longTrainDetails = DB::table('ticket_transactions')
-            // ->join('trains' ,'trains.id','=','ticket_transactions.train_id')
-            // ->where('trains.train_type','2')
-            // ->whereDate('ticket_transactions.created_at', $currentDate)
-            // ->get();
-
-            // $zoneTrainDetails = DB::table('ticket_transactions')
-            // ->join('trains' ,'trains.id','=','ticket_transactions.train_id')
-            // ->where('trains.train_type','1')
-            // ->whereDate('ticket_transactions.created_at', $currentDate)
-            // ->get();
-
             $total = DB::table('ticket_transactions')
                     ->join('trains', 'trains.id', '=', 'ticket_transactions.train_id')
                     ->where('trains.train_type', 1)
@@ -326,9 +325,6 @@ class DashboardController extends Controller
                     DB::raw('COUNT(CASE WHEN tnx.class_id = 3 THEN 1 END) AS third_trnx_amount'),
                     DB::raw('COUNT(CASE WHEN tnx.class_id = 2 THEN 1 END) AS second_trnx_amount'),
                     DB::raw('COUNT(CASE WHEN tnx.class_id = 1 THEN 1 END) AS first_trnx_amount'),
-                    // DB::raw('COUNT(CASE WHEN tnx.class_id = 3 THEN 1 END) AS third_class_trnx_count'),
-                    // DB::raw('COUNT(CASE WHEN tnx.class_id = 2 THEN 1 END) AS second_class_trnx_count'),
-                    // DB::raw('COUNT(CASE WHEN tnx.class_id = 1 THEN 1 END) AS first_class_trnx_count'),
                     DB::raw('MAX(CONCAT(tnx.trnx_date, " ", tnx.trnx_time)) as trnx_date'),
                 )
                 ->groupBy('trains.id', 'trains.train_number')
@@ -399,8 +395,8 @@ class DashboardController extends Controller
             ];
             return $this->success($response, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?: 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?: SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -433,48 +429,18 @@ class DashboardController extends Controller
 
             return $this->success($response, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?: 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?: SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
 
-//    public function getTransactionsByClassesOnEachMonth()
-//    {
-//        $currentYear = Carbon::now()->year;
-//
-//        // Initialize an array to store transaction data grouped by month
-//        $transactionDataByMonth = [];
-//
-//        // Iterate over each month in the year
-//        for ($month = 1; $month <= 12; $month++) {
-//            // Fetch transaction data grouped by class for the current month
-//            $transactions = DB::table('cfm_classes')
-//                ->leftJoin('transactions', 'cfm_classes.id', '=', 'transactions.class_id')
-//                ->select(
-//                    'cfm_classes.class_type',
-//                    'cfm_classes.code',
-//                    DB::raw('SUM(transactions.trnx_amount) as total_amount')
-//                )
-//                ->whereYear('transactions.trnx_date', $currentYear)
-//                ->whereMonth('transactions.trnx_date', $month)
-//                ->groupBy('cfm_classes.class_type', 'cfm_classes.code')
-//                ->orderBy('cfm_classes.class_type')
-//                ->get();
-//
-//            // Store the transaction data for the current month in the array
-//            $transactionDataByMonth[$month] = $transactions;
-//        }
-//
-//        // Return the data as JSON response
-//        return response()->json(['data' => $transactionDataByMonth]);
-//    }
 
     use checkAuthPermsissionTrait;
 
-    public function checkPermission(Request $request)
+    public function checkPermission()
     {
         return $this->getRolePermission(Auth::user()->role_id);
 

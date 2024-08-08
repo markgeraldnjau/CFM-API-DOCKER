@@ -3,13 +3,10 @@
 namespace App\Http\Controllers\Api\Train;
 
 use App\Http\Controllers\Controller;
-use App\Http\Resources\UserResource;
-use App\Models\CardCustomer;
 use App\Models\TrainCabinType;
-use App\Models\TrainWagonClass;
-use App\Models\TrainWagonType;
 use App\Models\User;
-use http\Env\Response;
+use App\Exceptions\RestApiException;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
@@ -19,27 +16,19 @@ use Illuminate\Support\Str;
 
 class TrainCarbinTypeController extends Controller
 {
+    use CommonTrait;
     /**
      * Display a listing of the resource.
      *
      * @return AnonymousResourceCollection
      */
-    public function index(Request $request)
+    public function index()
     {
-        $carbinTypes = TrainCabinType::select('id','name')->orderBy('id','asc')->get();
+        $carbinTypes = TrainCabinType::select('id', 'name')->orderBy('id', 'asc')->get();
 
-        return response()->json(['data' => $carbinTypes], 200);
+        return response()->json(['data' => $carbinTypes], HTTP_OK);
     }
 
-    /**
-     * Show the form for creating a new resource.
-     *
-     * @return \Illuminate\Http\Response
-     */
-    public function create()
-    {
-        //
-    }
 
     /**
      * Store a newly created resource in storage.
@@ -50,20 +39,18 @@ class TrainCarbinTypeController extends Controller
     public function store(Request $request)
     {
         $validatedData = $request->validate([
-            'first_name' => 'required',
-            'last_name' => 'required',
-            'email' => 'required',
-            'phone_number' => 'required',
-            'agent_number' => 'required',
-            'operator_id' => 'required',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
+            'email' => 'required|email:rfc,dns|max:255',
+            'phone_number' => 'required|string|phone_number|max:255',
+            'agent_number' => 'required|string|max:255',
+            'operator_id' => 'required|integer',
         ]);
 
         DB::beginTransaction();
         try {
-
             $password = Str::random(8);
-            Log::info($password);
-//    TODO: Send username and password
+            //    TODO: Send username and password
 
             $user = new User;
             $user->first_name = $validatedData['first_name'];
@@ -80,26 +67,14 @@ class TrainCarbinTypeController extends Controller
 
             DB::commit();
 
-            return response()->json(['message' => 'User created successfully'], 201);
+            return response()->json(['message' => 'User created successfully'], HTTP_CREATED);
         } catch (\Exception $e) {
-            dd($e);
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to create user'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => 'Failed to create user'], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-
-    /**
-     * Display the specified resource.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\Response
-     */
-    public function show($id)
-    {
-        //
-    }
 
     /**
      * Show the form for editing the specified resource.
@@ -109,11 +84,21 @@ class TrainCarbinTypeController extends Controller
      */
     public function edit($id)
     {
-        $user = User::find($id);
-        if (!$user) {
-            return response()->json(['message' => 'user not found'], 404);
+
+        try {
+            $user = User::find($id);
+            if (!$user) {
+                return response()->json(['message' => 'user not found'], HTTP_NOT_FOUND);
+            }
+            return response()->json($user, HTTP_OK);
+        } catch (\Throwable $th) {
+            Log::error(json_encode($this->errorPayload($th)));
+            $statusCode = $th->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
+            $errorMessage = $th->getMessage() ?: SERVER_ERROR;
+            throw new RestApiException($statusCode, $errorMessage);
+
         }
-        return response()->json($user, 200);
+
     }
 
     /**
@@ -126,22 +111,28 @@ class TrainCarbinTypeController extends Controller
     public function update(Request $request, $id)
     {
 
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         $validatedData = $request->validate([
-            'first_name' => 'required',
-            'last_name' => 'required',
-            'email' => 'required',
-            'phone_number' => 'required',
-            'agent_number' => 'required',
-            'operator_id' => 'required',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
+            'email' => 'required|email:rfc,dns|max:255',
+            'phone_number' => 'required|string|phone_number|max:255',
+            'agent_number' => 'required|string|max:255',
+            'operator_id' => 'required|integer',
         ]);
-
+        $user = User::findOrfail($id);
         DB::beginTransaction();
         try {
-            $user = User::find($id);
-            if (!$user) {
-                return response()->json(['message' => 'User not found'], 404);
-            }
 
+            if (!$user) {
+                return response()->json(['message' => 'User not found'], HTTP_NOT_FOUND);
+            }
             $user->first_name = $validatedData['first_name'];
             $user->last_name = $validatedData['last_name'];
             $user->username = $validatedData['first_name'] . '.' . $validatedData['last_name'];
@@ -151,25 +142,13 @@ class TrainCarbinTypeController extends Controller
             $user->account_type = 1;
             $user->operator_id = $validatedData['operator_id'];
             $user->save();
-
             DB::commit();
-
-            return response()->json(['message' => 'User updated successfully'], 201);
+            return response()->json(['message' => 'User updated successfully'], HTTP_CREATED);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to update user'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => 'Failed to update user'], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\Response
-     */
-    public function destroy($id)
-    {
-        //
-    }
 }

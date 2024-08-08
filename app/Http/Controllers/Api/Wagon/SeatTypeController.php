@@ -8,9 +8,7 @@ use App\Models\Wagon\SeatType;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\checkAuthPermsissionTrait;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class SeatTypeController extends Controller
@@ -26,7 +24,19 @@ class SeatTypeController extends Controller
      */
     public function index(Request $request)
     {
-        //
+
+        $validator = validator($request->all(), [
+            'search_query' => 'nullable|string|max:255',
+            'item_per_page' => 'nullable|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         $searchQuery = $request->input('search_query');
         $itemPerPage = $request->input('item_per_page', 10);
         try {
@@ -51,51 +61,5 @@ class SeatTypeController extends Controller
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
 
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
-    {
-        //
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
-    {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
-    }
 }

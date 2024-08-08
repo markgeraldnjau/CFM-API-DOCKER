@@ -7,18 +7,34 @@ use App\Http\Controllers\Controller;
 use App\Models\OperatorCategory;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
+use App\Traits\CommonTrait;
+
 use App\Traits\checkAuthPermsissionTrait;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
+
 class OperatorCategoryController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait;
+    use ApiResponse, AuditTrail, CommonTrait, checkAuthPermsissionTrait;
     /**
      * Display a listing of the resource.
      */
     public function index(Request $request): \Illuminate\Http\JsonResponse
     {
+
+        $validator = validator($request->all(), [
+            'search_query' => 'nullable|string',
+            'item_per_page' => 'nullable|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         $searchQuery = $request->input('search_query');
         $itemPerPage = $request->input('item_per_page', 10);
         try {
@@ -30,10 +46,11 @@ class OperatorCategoryController extends Controller
             }
             $operatorCategories = $query->orderByDesc('updated_at')->paginate($itemPerPage);
 
-              $this->auditLog("View Operator categories", PORTAL, null, null);
+            $this->auditLog("View Operator categories", PORTAL, null, null);
             return $this->success($operatorCategories, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
+
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
@@ -41,65 +58,20 @@ class OperatorCategoryController extends Controller
     }
 
 
-    public function getAllOperatorCategories(Request $request): \Illuminate\Http\JsonResponse
+    public function getAllOperatorCategories(): \Illuminate\Http\JsonResponse
     {
         try {
             $operatorCategories = OperatorCategory::select('id', 'token', 'code', 'category as name')->get();
-              $this->auditLog("View Operator categories", PORTAL, null, null);
+            $this->auditLog("View Operator categories", PORTAL, null, null);
             return $this->success($operatorCategories, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
+
             $statusCode = $e->getCode() ?? 500;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
 
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
-    {
-        //
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
-    {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
-    }
 }

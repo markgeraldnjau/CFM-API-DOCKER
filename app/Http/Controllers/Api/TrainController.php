@@ -5,9 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Requests\Train\CreateTrainRequest;
 use App\Http\Requests\Train\UpdateTrainRequest;
 use App\Models\Train;
-
 use App\Http\Controllers\Controller;
 use App\Traits\AuditTrail;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Request;
 use App\Traits\ApiResponse;
 use App\Exceptions\RestApiException;
@@ -16,18 +16,16 @@ use Illuminate\Support\Facades\Log;
 
 class TrainController extends Controller
 {
-    use ApiResponse, AuditTrail;
+    use ApiResponse, AuditTrail,CommonTrait;
     /**
      * Display a listing of the resource.
      */
     /**
      * Display a listing of the resource.
      */
-    public function index(Request $request)
+    public function index()
     {
-
         try {
-
                 $trains = DB::table('trains')
                 ->join('train_routes', 'train_routes.id', '=', 'trains.route_id')
                 ->join('train_lines', 'train_lines.id', '=', 'train_routes.train_line_id')
@@ -42,29 +40,27 @@ class TrainController extends Controller
             return response()->json($trains);
 
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    public function train_details_informations(Request $request)
+    public function train_details_informations()
     {
-
         try {
             $trains = DB::table('trains')->get();
             return response()->json($trains);
-
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    public function allTrainSelectedInfo(Request $request)
+    public function allTrainSelectedInfo()
     {
         try {
             $trains = Train::select('id', 'train_number')->get();
@@ -75,8 +71,8 @@ class TrainController extends Controller
             $this->auditLog("View All Trains", PORTAL, null, null);
             return $this->success($trains, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             return $this->error(null, $errorMessage, $statusCode);
         }
@@ -84,29 +80,61 @@ class TrainController extends Controller
 
     public function train_detail(Request $request)
     {
+        $validator = validator($request->all(), [
+            'id' => 'required|integer|exists:trains,id',
+        ]);
 
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         try {
+            $columns = [
+                'id',
+                'train_number',
+                'train_name',
+                'etd',
+                'train_type',
+                'departure_day',
+                'arrival_day',
+                'route_id',
+                'start_stop_id',
+                'end_stop_id',
+                'activated',
+                'last_update',
+                'train_first_class',
+                'train_second_class',
+                'train_third_class',
+                'pair_train',
+                'train_capacity',
+                'travel_hours_duration',
+                'zone_one',
+                'zone_two',
+                'zone_three',
+                'zone_four',
+                'int_price_group',
+                'reverse_train_id',
+                'etd_24_format',
+                'created_at',
+                'updated_at'
+            ];
 
-                $trains = DB::table('trains')
-                ->where('id','=',$request->id)
+             $trains = DB::table('trains')
+                 ->select($columns)
+                ->where('id','=',$validator['id'])
                 ->get();
 
             return response()->json($trains);
 
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
-    }
-
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
     }
 
     /**
@@ -146,8 +174,8 @@ class TrainController extends Controller
             return response()->json(['status' => 'success', 'message' => 'Successfully Created New Train Line', 'data' => $train], 201);
         } catch (\Throwable $th) {
             DB::rollBack();
-            Log::error($th->getMessage());
-            return response()->json(['status' => 'fail', 'message' => $th->getMessage()], 500);
+            Log::error(json_encode($this->errorPayload($th)));
+            return response()->json(['status' => 'fail', 'message' => $th->getMessage()], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -162,34 +190,26 @@ class TrainController extends Controller
             $Train = Train::findOrFail($id);
 
             if (!$Train) {
-                throw new RestApiException(404, 'No train found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No train found!');
             }
             return $this->success($Train, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-
-    }
 
     /**
      * Update the specified resource in storage.
      */
     public function update(UpdateTrainRequest $request, $id)
     {
+        $train = Train::findOrFail($id);
         DB::beginTransaction();
         try {
-            $train = Train::findOrFail($id);
 
             $payload = [
                 'train_name' => $request->train_name,
@@ -210,8 +230,6 @@ class TrainController extends Controller
                 'zone_four' => $request->zone_four,
             ];
 
-//            dd($payload, $train);
-
             $train->update($payload);
 
             $this->auditLog("Update Train: " . $train->train_name . '-' . $train->train_number, PORTAL, $payload, $payload);
@@ -220,20 +238,12 @@ class TrainController extends Controller
 
             return $this->success($train, DATA_UPDATED);
         } catch (\Exception $e) {
-            dd($e);
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            $statusCode = $e->getCode() ?? 500;
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
-    }
 }

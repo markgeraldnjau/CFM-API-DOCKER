@@ -3,22 +3,30 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\CfmClass;
 use App\Models\PriceTable;
+use App\Traits\ApiResponse;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\Exceptions\RestApiException;
-use App\Traits\ApiResponse;
+use Illuminate\Support\Facades\Validator;
 
 class PriceTableController extends Controller
 {
+    use CommonTrait, ApiResponse;
     /**
      * Display a listing of the resource.
      */
     public function index(Request $request)
     {
+        $validator = Validator::make($request->all(), [
+            'item_per_page' => ['nullable', 'numeric', 'max:255'],
+        ]);
 
+        if ($validator->fails()) {
+            $errors = implode(', ', $validator->errors()->all());
+            return $this->error(null, $errors, HTTP_UNPROCESSABLE_ENTITY);
+        }
         try {
             $priceTables = PriceTable::with([
                 'trainLine:id,line_name',
@@ -33,90 +41,84 @@ class PriceTableController extends Controller
                         'distance',
                         'fare_charge',
                         'cfm_class_id',
-                    ])->latest('id')->paginate($request->items_per_page);
+                    ])->latest('id')->paginate($validator['items_per_page']);
             return response()->json($priceTables);
         } catch (\Throwable $th) {
-            Log::error($th->getMessage());
+            Log::error(json_encode($this->errorPayload($th)));
             return response()->json(["error" => $th->getMessage()]);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
 
     /**
      * Store a newly created resource in storage.
      */
     public function store(Request $request)
     {
-        Log::info($request->all());
+        // Validate the request data
+        $validatedData = $request->validate([
+            'train_line_id' => 'required|integer|exists:train_lines,id',
+            'train_station_stop_from' => 'nullable|integer|exists:train_stations,id',
+            'train_station_stop_to' => 'nullable|integer|exists:train_stations,id',
+            'distance' => 'nullable|string|max:10',
+            'fare_charge' => 'required|numeric|min:0|max:999999.99',
+            'cfm_class_id' => 'required|integer|between:1,127',
+        ]);
+
         DB::beginTransaction();
         try {
             $priceTable = new PriceTable();
-            $priceTable->train_line_id = $request->train_line_id;
-            $priceTable->train_station_stop_from = $request->train_station_stop_from;
-            $priceTable->distance = $request->distance;
-            $priceTable->train_station_stop_to = $request->train_station_stop_to;
-            $priceTable->fare_charge = $request->fare_charge;
-            $priceTable->cfm_class_id = $request->cfm_class_id;
+            $priceTable->train_line_id = $validatedData['train_line_id'];
+            $priceTable->train_station_stop_from = $validatedData['train_station_stop_from'];
+            $priceTable->train_station_stop_to = $validatedData['train_station_stop_to'];
+            $priceTable->distance = $validatedData['distance'];
+            $priceTable->fare_charge = $validatedData['fare_charge'];
+            $priceTable->cfm_class_id = $validatedData['cfm_class_id'];
             $priceTable->save();
+
             DB::commit();
-            return response()->json(['status' => 'success', 'message' => 'Successfully Create New Train Price'], 200);
+            return response()->json(['status' => 'success', 'message' => 'Successfully Created New Train Price'], HTTP_OK);
         } catch (\Throwable $th) {
             DB::rollBack();
-            Log::error($th->getMessage());
-            //throw $th;
-            return response()->json(['status' => 'fail', 'message' => $th->getMessage()], 200);
-
+            Log::error(json_encode($this->errorPayload($th)));
+            return response()->json(['status' => 'fail', 'message' => $th->getMessage()], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(Request $Request)
-    {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(Request $Request)
-    {
-        //
-    }
 
     /**
      * Update the specified resource in storage.
      */
     public function update(Request $request, $id)
     {
-        $priceTable = PriceTable::find($id);
-        if ($priceTable) {
-            $priceTable->train_line_id = $request->train_line_id;
-            $priceTable->train_station_stop_from = $request->train_station_stop_from;
-            $priceTable->distance = $request->distance;
-            $priceTable->train_station_stop_to = $request->train_station_stop_to;
-            $priceTable->fare_charge = $request->fare_charge;
-            $priceTable->cfm_class_id = $request->cfm_class_id;
-            $priceTable->update();
-            return response()->json(['status' => 'success', 'message' => 'Successfully update Train Price'], 200);
-        } else {
-            return response()->json(['status' => 'failed', 'message' => 'Train Price not found'], 200);
+        // Validate the request data
+        $validatedData = $request->validate([
+            'train_line_id' => 'required|integer|exists:train_lines,id',
+            'train_station_stop_from' => 'nullable|integer|exists:train_stations,id',
+            'train_station_stop_to' => 'nullable|integer|exists:train_stations,id',
+            'distance' => 'nullable|string|max:10',
+            'fare_charge' => 'required|numeric|min:0|max:999999.99',
+            'cfm_class_id' => 'required|integer|between:1,127',
+        ]);
+
+        try{
+            $priceTable = PriceTable::find($id);
+            if ($priceTable) {
+                $priceTable->train_line_id = $validatedData['train_line_id'];
+                $priceTable->train_station_stop_from = $validatedData['train_station_stop_from'];
+                $priceTable->train_station_stop_to = $validatedData['train_station_stop_to'];
+                $priceTable->distance = $validatedData['distance'];
+                $priceTable->fare_charge = $validatedData['fare_charge'];
+                $priceTable->cfm_class_id = $validatedData['cfm_class_id'];
+                $priceTable->update();
+                return response()->json(['status' => 'success', 'message' => 'Successfully update Train Price'], HTTP_OK);
+            } else {
+                return response()->json(['status' => 'failed', 'message' => 'Train Price not found'], HTTP_OK);
+            }
+        }catch(\Exception $e){
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['status' => 'fail', 'message' => $e->getMessage()], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(Request $Request, $id)
-    {
-        //
-    }
 }

@@ -10,6 +10,7 @@ use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\checkAuthPermsissionTrait;
 use Illuminate\Http\Request;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -18,7 +19,7 @@ use Illuminate\Support\Str;
 
 class TrainController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait;
+    use ApiResponse, CommonTrait, AuditTrail, checkAuthPermsissionTrait;
     /**
      * Display a listing of the resource.
      *
@@ -26,13 +27,24 @@ class TrainController extends Controller
      */
     public function index()
     {
-        $trains = DB::table('trains')->select('id','train_number')->orderBy('id','asc')->get();
+        $trains = DB::table('trains')->select('id', 'train_number')->orderBy('id', 'asc')->get();
 
-        return response()->json(['data' => $trains], 200);
+        return response()->json(['data' => $trains], HTTP_OK);
     }
 
     public function trainWithoutLayout(Request $request)
     {
+        $validator = validator($request->all(), [
+            'search_query' => 'nullable|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         $searchQuery = $request->input('search_query');
         try {
             $query = DB::table('trains')
@@ -48,30 +60,22 @@ class TrainController extends Controller
                     $query->where('t.name', 'like', "%$searchQuery%");
                 });
             }
-            $trainLayout = $query->orderBy('id','asc')->get();
+            $trainLayout = $query->orderBy('id', 'asc')->get();
 
             if (!$trainLayout) {
-                throw new RestApiException(404, 'No train found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No train found!');
             }
             $this->auditLog("View Train without layouts", PORTAL, null, null);
             return $this->success($trainLayout, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     *
-     * @return \Illuminate\Http\Response
-     */
-    public function create()
-    {
-        //
-    }
+
 
     /**
      * Store a newly created resource in storage.
@@ -82,20 +86,19 @@ class TrainController extends Controller
     public function store(Request $request)
     {
         $validatedData = $request->validate([
-            'first_name' => 'required',
-            'last_name' => 'required',
-            'email' => 'required',
-            'phone_number' => 'required',
-            'agent_number' => 'required',
-            'operator_id' => 'required',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
+            'email' => 'required|email:rfc,dns|max:255',
+            'phone_number' => 'required|string|phone_number|max:255',
+            'agent_number' => 'required|string|max:255',
+            'operator_id' => 'required|integer',
         ]);
 
         DB::beginTransaction();
         try {
 
             $password = Str::random(8);
-            Log::info($password);
-//    TODO: Send username and password
+            //    TODO: Send username and password
 
             $user = new User;
             $user->first_name = $validatedData['first_name'];
@@ -112,26 +115,15 @@ class TrainController extends Controller
 
             DB::commit();
 
-            return response()->json(['message' => 'User created successfully'], 201);
+            return response()->json(['message' => 'User created successfully'], HTTP_CREATED);
         } catch (\Exception $e) {
-            dd($e);
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to create user'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => 'Failed to create user'], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
 
-    /**
-     * Display the specified resource.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\Response
-     */
-    public function show($id)
-    {
-        //
-    }
 
     /**
      * Show the form for editing the specified resource.
@@ -141,11 +133,19 @@ class TrainController extends Controller
      */
     public function edit($id)
     {
-        $user = User::find($id);
-        if (!$user) {
-            return response()->json(['message' => 'user not found'], 404);
+        $user = User::findOrFail($id);
+        try {
+            if (!$user) {
+                return response()->json(['message' => 'user not found'], HTTP_NOT_FOUND);
+            }
+            return response()->json($user, HTTP_OK);
+        } catch (\Throwable $th) {
+            Log::error(json_encode($this->errorPayload($th)));
+            $statusCode = $th->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
+            $errorMessage = $th->getMessage() ?: SERVER_ERROR;
+            throw new RestApiException($statusCode, $errorMessage);
         }
-        return response()->json($user, 200);
+
     }
 
     /**
@@ -157,21 +157,27 @@ class TrainController extends Controller
      */
     public function update(Request $request, $id)
     {
-
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         $validatedData = $request->validate([
-            'first_name' => 'required',
-            'last_name' => 'required',
-            'email' => 'required',
-            'phone_number' => 'required',
-            'agent_number' => 'required',
-            'operator_id' => 'required',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
+            'email' => 'required|email:rfc,dns|max:255',
+            'phone_number' => 'required|string|phone_number|max:255',
+            'agent_number' => 'required|string|max:255',
+            'operator_id' => 'required|integer',
         ]);
+        $user = User::findOrFail($id);
 
         DB::beginTransaction();
         try {
-            $user = User::find($id);
             if (!$user) {
-                return response()->json(['message' => 'User not found'], 404);
+                return response()->json(['message' => 'User not found'], HTTP_NOT_FOUND);
             }
 
             $user->first_name = $validatedData['first_name'];
@@ -186,22 +192,12 @@ class TrainController extends Controller
 
             DB::commit();
 
-            return response()->json(['message' => 'User updated successfully'], 201);
+            return response()->json(['message' => 'User updated successfully'], HTTP_CREATED);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to update user'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => 'Failed to update user'], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\Response
-     */
-    public function destroy($id)
-    {
-        //
-    }
 }

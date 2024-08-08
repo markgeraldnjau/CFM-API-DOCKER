@@ -8,41 +8,36 @@ use App\Http\Requests\Report\ApprovalProcessRequest;
 use App\Jobs\RunGeneralReportsJob;
 use App\Models\Report;
 use App\Models\Report\ReportRequest;
-use App\Models\ReportModule;
-use App\Models\ReportParameter;
-use App\Models\User;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\checkAuthPermsissionTrait;
 use App\Traits\ReportTrait;
-use Barryvdh\DomPDF\Facade\Pdf as PDF;
+use App\Traits\CommonTrait;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
-use Illuminate\Support\Facades\Storage;
 
 class TransactionReportOptionController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait, ReportTrait;
+    use ApiResponse, AuditTrail, CommonTrait, checkAuthPermsissionTrait, ReportTrait;
 
     public function index()
     {
-        //
+
         try {
             $transactionSummaryOptions = Report\TransactionReportOption::select('id', 'code', 'name', 'table_name')->get();
 
-            // Check if any branches were found
             if (!$transactionSummaryOptions) {
-                throw new RestApiException(404, 'No train line found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No train line found!');
             }
 
             return $this->success($transactionSummaryOptions, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?: 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?: SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -50,9 +45,18 @@ class TransactionReportOptionController extends Controller
 
     public function lastFirstReportRequest(Request $request)
     {
+        $validator = validator($request->all(), [
+            'search_query' => 'nullable|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         $searchQuery = $request->input('search_query');
-        $itemPerPage = $request->input('item_per_page', 10);
-        //
         try {
             $query = DB::table('report_requests as r')->select(
                 'r.id',
@@ -82,26 +86,18 @@ class TransactionReportOptionController extends Controller
             $reportRequest = $query->latest()->first();
 
             if (!$reportRequest) {
-                throw new RestApiException(404, 'No report modules found!');
+                throw new RestApiException(404, NOT_FOUND);
             }
-//            $this->auditLog("View Report Modules", PORTAL, null, null);
             return $this->success($reportRequest, DATA_RETRIEVED);
         } catch (\Exception $e) {
-
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
+
 
     /**
      * Store a newly created resource in storage.
@@ -131,19 +127,18 @@ class TransactionReportOptionController extends Controller
             $delayInSeconds = 0;
             $job = new RunGeneralReportsJob($request->report_code, $startDate, $endDate, $request->file_type, $createdBy, $reportRequest->id);
             Queue::later(now()->addSeconds($delayInSeconds), $job);
-//            dispatch(New RunGeneralReportsJob($request->report_code, $parameters, $startDate, $endDate, $request->file_type, $request->created_by, $reportRequest->id));
 
-            $this->auditLog("Create Report request: ". $request->report_name .' from '. $startDate .' to '. $endDate, PORTAL, $payload, $payload);
+            $this->auditLog("Create Report request: " . $request->report_name . ' from ' . $startDate . ' to ' . $endDate, PORTAL, $payload, $payload);
             DB::commit();
             return $this->success($reportRequest, DATA_SAVED);
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -152,8 +147,13 @@ class TransactionReportOptionController extends Controller
      */
     public function show(string $token)
     {
-        //
-        //
+        if (is_null($token)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $token = strip_tags($token);
         try {
             $reportRequest = ReportRequest::where('token', $token)->select(
                 'id',
@@ -170,59 +170,37 @@ class TransactionReportOptionController extends Controller
             )->firstOrFail();
 
             if (!$reportRequest) {
-                throw new RestApiException(404, 'No report requests found!');
+                throw new RestApiException(404, NOT_FOUND);
             }
 
-            $this->auditLog("View Wagon Layouts: ". $reportRequest->report_name .' from '. $reportRequest->from_date .' to '. $reportRequest->to_date, PORTAL, null, null);
+            $this->auditLog("View Wagon Layouts: " . $reportRequest->report_name . ' from ' . $reportRequest->from_date . ' to ' . $reportRequest->to_date, PORTAL, null, null);
             return $this->success($reportRequest, DATA_RETRIEVED);
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
-    }
 
     public function getReportFile(ApprovalProcessRequest $request)
     {
         try {
             $response = $this->openReportFile($request->file_type, $request->download_url);
-            $this->auditLog("Get Report with Type: ". $request['file_type'] .' with url '. $response['url'], PORTAL, null, null);
+            $this->auditLog("Get Report with Type: " . $request['file_type'] . ' with url ' . $response['url'], PORTAL, null, null);
             return $this->success($response, DATA_RETRIEVED);
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }

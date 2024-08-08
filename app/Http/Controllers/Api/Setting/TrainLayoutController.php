@@ -4,58 +4,39 @@ namespace App\Http\Controllers\Api\Setting;
 
 use App\Exceptions\RestApiException;
 use App\Http\Controllers\Controller;
-use App\Http\Resources\UserResource;
-use App\Models\Customer;
-use App\Models\SpecialGroup;
-use App\Models\TrainCabin;
 use App\Models\TrainCabinSetting;
-use App\Models\TrainWagon;
-use App\Models\TrainWagonSetup;
-use App\Models\User;
 use App\Traits\ApiResponse;
-use Carbon\Carbon;
-use http\Env\Response;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
 class TrainLayoutController extends Controller
 {
-    use ApiResponse;
+    use ApiResponse, CommonTrait;
+
     /**
      * Display a listing of the resource.
      *
      * @return AnonymousResourceCollection
      */
-    public function index(Request $request)
+    public function index()
     {
         try {
-            $tains = TrainCabinSetting::select('train_cabin_settings.id', 'train_cabin_settings.compatment_no','train_cabin_settings.cabin_no','train_cabin_settings.total_seat_no','t.train_number','twc.name as class')
+            $tains = TrainCabinSetting::select('train_cabin_settings.id', 'train_cabin_settings.compatment_no', 'train_cabin_settings.cabin_no', 'train_cabin_settings.total_seat_no', 't.train_number', 'twc.name as class')
                 ->join('trains as t', 't.id', '=', 'train_cabin_settings.train_id')
                 ->join('train_wagon_class as twc', 'twc.id', '=', 'train_cabin_settings.class_id')
                 ->orderBy('id', 'asc')
                 ->get();
 
             return $this->success($tains, DATA_RETRIEVED);
-        }catch(\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+        } catch (\Exception $e) {
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
-    }
-
-    /**
-     * Show the form for creating a new resource.
-     *
-     * @return \Illuminate\Http\Response
-     */
-    public function create()
-    {
-        //
     }
 
     /**
@@ -66,14 +47,23 @@ class TrainLayoutController extends Controller
      */
     public function store(Request $request)
     {
-        $validatedData = $request->validate([
-            'train_id' => 'required',
-            'cabin' => 'required',
-            'compatment' => 'required',
-            'seat_no' => 'required',
-            'class_id' => 'required',
+        $validatedData = validator($request->all(), [
+            'train_id' => 'required|exists:trains,id',
+            'cabin' => 'required|integer',
+            'compatment' => 'required|integer',
+            'seat_no' => 'required|integer',
+            'class_id' => 'required|exists:cfm_classes,id',
         ]);
 
+        if ($validatedData->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'code' => HTTP_UNPROCESSABLE_ENTITY,
+                'errors' => $validatedData->errors()->messages()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+
+        }
         DB::beginTransaction();
         try {
             $data = new TrainCabinSetting();
@@ -86,10 +76,12 @@ class TrainLayoutController extends Controller
             $data->save();
 
             DB::commit();
-            return $this->success($data,DATA_SAVED);
+            return $this->success($data, DATA_SAVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+
+
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -104,23 +96,27 @@ class TrainLayoutController extends Controller
      */
     public function show($id)
     {
-        $data = TrainCabinSetting::find($id);
-        if (!$data) {
-            return response()->json(['message' => 'data not found'], 404);
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], 400);
         }
-        return response()->json($data, 200);
+        $data = TrainCabinSetting::findOrFail($id);
+        try {
+            if (!$data) {
+                return response()->json(['message' => 'data not found'], HTTP_NOT_FOUND);
+            }
+            return response()->json($data, HTTP_OK);
+        } catch (\Throwable $th) {
+            Log::error(json_encode($this->errorPayload($th)));
+            $statusCode = $th->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
+            $errorMessage = $th->getMessage() ?: SERVER_ERROR;
+            throw new RestApiException($statusCode, $errorMessage);
+        }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\Response
-     */
-    public function edit($id)
-    {
-
-    }
 
     /**
      * Update the specified resource in storage.
@@ -131,19 +127,26 @@ class TrainLayoutController extends Controller
      */
     public function update(Request $request, $id)
     {
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         $validatedData = $request->validate([
-            'train_id' => 'required',
-            'cabin' => 'required',
-            'compatment' => 'required',
-            'seat_no' => 'required',
-            'class_id' => 'required',
+            'train_id' => 'required|exists:trains,id',
+            'cabin' => 'required|integer',
+            'compatment' => 'required|integer',
+            'seat_no' => 'required|integer',
+            'class_id' => 'required|exists:cfm_classes,id',
         ]);
-
+        $data = TrainCabinSetting::findOrfail($id);
         DB::beginTransaction();
         try {
-            $data = TrainCabinSetting::find($id);
+
             if (!$data) {
-                return response()->json(['message' => 'Data not found'], 404);
+                return response()->json(['message' => 'Data not found'], HTTP_NOT_FOUND);
             }
 
             $data->train_id = $validatedData['train_id'];
@@ -155,24 +158,11 @@ class TrainLayoutController extends Controller
             $data->save();
 
             DB::commit();
-
-            return response()->json(['message' => 'Data updated successfully'], 201);
+            return response()->json(['message' => DATA_SAVED], HTTP_CREATED);
         } catch (\Exception $e) {
-            dd($e);
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to update cabin'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => 'Failed to update cabin'], HTTP_INTERNAL_SERVER_ERROR);
         }
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\Response
-     */
-    public function destroy($id)
-    {
-        //
     }
 }

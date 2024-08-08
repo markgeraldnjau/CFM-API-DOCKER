@@ -6,88 +6,56 @@ use App\Http\Controllers\Controller;
 use App\Models\CustomerAccount;
 use App\Models\CardCustomer;
 use App\Traits\ApiResponse;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 
 class CustomerAccountController extends Controller
 {
-    use ApiResponse;
+    use ApiResponse, CommonTrait;
     public function index(Request $request)
     {
-        if (isset($request->status)) {
-            $cardAccounts = CustomerAccount::with([
-                'card' => function ($query) {
-                    $query->select('id', DB::raw("CONCAT_WS('', LEFT(cards.card_number,4), '****', RIGHT(cards.card_number,5)) AS card_number"));
-                },
-                'cardCustomer:id,full_name,phone',
-                'accountUsageType:id,type,name',
-                'customerAccountPackageType:id,package_name,package_code'
-            ])
-                ->select([
-                    'id',
-                    'card_id',
-                    'account_number',
-                    'customer_id',
-                    'accounts_usage_type',
-                    'customer_account_package_type',
-                    'account_balance',
-                    'min_account_balance',
-                    'status',
-                    'max_trip_per_day',
-                    'trips_number_balance'
-                ])
-                ->where('status', $request->status)
-                ->latest('id')
-                ->paginate($request->items_per_page);
-
-
-            $cardAccounts = CardCustomer::select('card_customers.full_name', 'card_customers.phone', 'customer_accounts.*', 'customer_account_package_types.package_code', 'cards.card_number', 'special_groups.title')
-                ->join('customer_accounts', 'customer_accounts.customer_id', '=', 'card_customers.id')
-                ->join('cards', 'cards.id', '=', 'customer_accounts.card_id')
-                ->join('customer_account_package_types', 'customer_account_package_types.id', '=', 'customer_accounts.customer_account_package_type')
-                ->join('special_groups', 'special_groups.id', '=', 'card_customers.special_group_id')
-                ->where('customer_accounts.status', $request->status)
-                ->orderBy('card_customers.id', 'DESC')
-                ->paginate($request->items_per_page);
-
-        } else {
-            $cardAccounts = CustomerAccount::with([
-                'card' => function ($query) {
-                    $query->select('id', DB::raw("CONCAT_WS('', LEFT(cards.card_number,4), '****', RIGHT(cards.card_number,5)) AS card_number"));
-                },
-                'cardCustomer:id,full_name,phone',
-                'accountUsageType:id,type,name',
-                'customerAccountPackageType:id,package_name,package_code'
-            ])
-                ->select([
-                    'id',
-                    'card_id',
-                    'account_number',
-                    'customer_id',
-                    'accounts_usage_type',
-                    'customer_account_package_type',
-                    'account_balance',
-                    'min_account_balance',
-                    'status',
-                    'max_trip_per_day',
-                    'trips_number_balance'
-                ])
-                ->whereIn('status', ['A', 'I'])
-                ->latest('id')
-                ->paginate($request->items_per_page);
-
-            $cardAccounts = CardCustomer::select('card_customers.full_name', 'card_customers.phone', 'customer_accounts.*', 'customer_account_package_types.package_code', 'cards.card_number', 'special_groups.title')
-                ->join('customer_accounts', 'customer_accounts.customer_id', '=', 'card_customers.id')
-                ->join('cards', 'cards.id', '=', 'customer_accounts.card_id')
-                ->join('customer_account_package_types', 'customer_account_package_types.id', '=', 'customer_accounts.customer_account_package_type')
-                ->join('special_groups', 'special_groups.id', '=', 'card_customers.special_group_id')
-                ->where('customer_accounts.status', $request->status)
-                ->orderBy('card_customers.id', 'DESC')
-                ->paginate($request->items_per_page);
+        $validatedData = validator($request->all(), [
+            'status' => 'nullable|string',
+            'items_per_page' => 'nullable|numeric',
+        ]);
+        if ($validatedData->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validatedData->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        return response()->json($cardAccounts, 200);
+        $searchQuery = $request->input('search_query');
+
+
+        $query = CardCustomer::select('card_customers.full_name', 'card_customers.phone', 'customer_accounts.*', 'customer_account_package_types.package_code', 'cards.card_number', 'special_groups.title')
+            ->join('customer_accounts', 'customer_accounts.customer_id', '=', 'card_customers.id')
+            ->join('cards', 'cards.id', '=', 'customer_accounts.card_id')
+            ->join('customer_account_package_types', 'customer_account_package_types.id', '=', 'customer_accounts.customer_account_package_type')
+            ->join('special_groups', 'special_groups.id', '=', 'card_customers.special_group_id');
+
+        if (isset($request->status)) {
+            $query->where('customer_accounts.status', $request->status);
+        }
+
+        if ($searchQuery !== null) {
+            $query->where(function ($query) use ($searchQuery) {
+                $query->where('card_customers.full_name', 'like', "%$searchQuery%")
+                    ->orWhere('cards.card_number', 'like', "%$searchQuery%")
+                    ->orWhere('card_customers.identification_number', 'like', "%$searchQuery%")
+                    ->orWhere('card_customers.phone', 'like', "%$searchQuery%");
+            });
+        }
+
+        $cardAccounts = $query->orderBy('card_customers.id', 'DESC')->paginate($request->items_per_page);
+
+        return response()->json($cardAccounts, HTTP_OK);
     }
     public function account_details(Request $request)
     {
@@ -95,35 +63,38 @@ class CustomerAccountController extends Controller
             ->select('card_customers.first_name', 'card_customers.middle_name', 'card_customers.last_name', 'customer_accounts.*')
             ->join('card_customers', 'customer_accounts.customer_id', '=', 'card_customers.id')
             ->where('customer_accounts.id', $request->id)
-            ->get();
+            ->first();
 
 
-        return response()->json($cardAccounts, 200);
+        return response()->json($cardAccounts, HTTP_OK);
     }
     public function store(Request $request)
     {
-        $validatedData = validator($request->all(), [
-            'account_number' => 'required',
-            'card_id' => 'required',
-            'customer_id' => 'required',
-            'account_usage' => 'required',
-            'account_balance' => 'required',
-            'max_trip_per_day' => 'required',
-            'creditAmount' => 'required',
-            'status' => 'required',
-            'account_type' => 'required',
-            'account_validity' => 'required',
-            'trips_number_balance' => 'required',
-            'linker' => 'required',
-        ]);
+        $validatedData = validator(
+            $request->all(),
+            [
+                'account_number' => 'required|string|max:20',
+                'card_id' => 'required|exists:cards,id',
+                'customer_id' => 'required|exists:customers,id',
+                'account_balance' => 'required|numeric|between:0,9999999999999999.99',
+                'status' => [
+                    'required',
+                    'char:1',
+                    Rule::in(['A', 'I']),
+                ],
+                'linker' => 'required|integer|min:0',
+                'account_validity' => 'nullable|date',
+                'trips_number_balance' => 'required|integer|min:0',
+                'max_trip_per_day' => 'required|integer|min:0',
+            ]
+        );
         if ($validatedData->fails()) {
             return response()->json([
                 'status' => VALIDATION_ERROR,
                 'message' => VALIDATION_FAIL,
                 'errors' => $validatedData->errors()
-            ], 422);
+            ], HTTP_UNPROCESSABLE_ENTITY);
         }
-
         DB::beginTransaction();
         try {
             $cardAccount = new CustomerAccount;
@@ -133,35 +104,51 @@ class CustomerAccountController extends Controller
             }
             // Save the model
             $cardAccount->save();
-
-            // Commit the transaction
             DB::commit();
-            return response()->json(['message' => DATA_SAVED], 200);
+            return response()->json(['message' => DATA_SAVED], HTTP_OK);
         } catch (\Exception $e) {
             // Rollback the transaction in case of an exception
             DB::rollback();
+            Log::error(json_encode($this->errorPayload($e)));
             // Handle the exception
-            return response()->json(['error' => SOMETHING_WENT_WRONG], 500);
+            return response()->json(['error' => SOMETHING_WENT_WRONG], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
     public function show($id)
     {
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         $cardAccount = CustomerAccount::find($id);
         if (!$cardAccount) {
-            return response()->json(['message' => 'Card account detail not found'], 404);
+            return response()->json(['message' => NOT_FOUND], HTTP_NOT_FOUND);
         }
-        return response()->json($cardAccount, 200);
     }
 
     public function update(Request $request, $id)
     {
-        $validatedData = validator($request->all(), [
-            'account_number' => 'required',
-            'trips' => 'required',
-            'account_balance' => 'required',
-            'status' => 'required',
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
 
+        $validatedData = Validator::make($request->all(), [
+            'account_number' => 'required|string|max:20',
+            'trips' => 'required|numeric|between:0,9999999999999999.99',
+            'status' => [
+                'required',
+                'string',
+                'size:1',
+                Rule::in(['A', 'B']),
+            ],
         ]);
 
         if ($validatedData->fails()) {
@@ -169,7 +156,7 @@ class CustomerAccountController extends Controller
                 'status' => VALIDATION_ERROR,
                 'message' => VALIDATION_FAIL,
                 'errors' => $validatedData->errors()
-            ], 422);
+            ], HTTP_UNPROCESSABLE_ENTITY);
         }
 
         DB::beginTransaction();
@@ -177,41 +164,48 @@ class CustomerAccountController extends Controller
         try {
             $cardAccount = CustomerAccount::find($id);
             if (!$cardAccount) {
-                return response()->json(['status' => 'failed', 'message' => 'Card account detail not found'], 404);
+                return response()->json(['status' => 'failed', 'message' => NOT_FOUND], HTTP_NOT_FOUND);
             }
-            $cardAccount->account_number = $validatedData['account_number'];
-            $cardAccount->trips_number_balance = $validatedData['trips'];
-            $cardAccount->account_balance = $validatedData['account_balance'];
-            $cardAccount->status = $validatedData['status'];
+
+            $cardAccount->account_number = $validatedData->validated()['account_number'];
+            $cardAccount->trips_number_balance = $validatedData->validated()['trips'];
+            $cardAccount->status = $validatedData->validated()['status'];
 
             $cardAccount->update();
 
             DB::commit();
 
-            return response()->json(['message' => 'Card account detail updated successfully'], 200);
+            return $this->success(null, DATA_UPDATED);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to update card account detail'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return $this->error(null, HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
     public function destroy($id)
     {
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         DB::beginTransaction();
 
         try {
             $cardAccount = CustomerAccount::find($id);
             if (!$cardAccount) {
-                return response()->json(['message' => 'Card account detail not found'], 404);
+                return response()->json(['message' => NOT_FOUND], HTTP_NOT_FOUND);
             }
             $cardAccount->delete();
             DB::commit();
-            return response()->json(['message' => 'Card account detail deleted successfully'], 200);
+            return response()->json(['message' => DATA_DELETED], HTTP_OK);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to delete card account detail'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => FAILED], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 }

@@ -11,146 +11,125 @@ use App\Models\Gender;
 use App\Models\Operator\OperatorType;
 use App\Models\Province;
 use App\Models\TrainDirection;
-use DB;
-use Illuminate\Http\Request;
-use Log;
+use App\Traits\CommonTrait;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+
 
 class GeneralController extends Controller
 {
+    use CommonTrait;
   //
-  public function cfmRegions(Request $request)
+  public function cfmRegions()
   {
     try {
       $cfm_regions = CfmRegion::select('id', 'region_code', 'region_name')->get();
-
-      Log::info("cfm data are ");
-      Log::info($cfm_regions);
+      Log::info("CFM_DATA",['DATA'=>$cfm_regions]);
       return response()->json($cfm_regions);
     } catch (\Throwable $th) {
-      //throw $th;
-      Log::error($th->getMessage());
-      return response()->json($th->getMessage());
-
+        Log::error(json_encode($this->errorPayload($th)));
+        return response()->json($th->getMessage());
     }
   }
-  public function farePriceCategories(Request $request)
+  public function farePriceCategories()
   {
     try {
       $fare_price_categories = FarePriceCategory::select('id', 'price_formula', 'more')->get();
 
-      Log::info("fare_price_categories data are ");
-      Log::info($fare_price_categories);
+      Log::info("fare_price_categories_data",['DATA'=>$fare_price_categories]);
       return response()->json($fare_price_categories);
     } catch (\Throwable $th) {
-      //throw $th;
-      Log::error($th->getMessage());
-      return response()->json($th->getMessage());
-
+        Log::error(json_encode($this->errorPayload($th)));
+        return response()->json($th->getMessage());
     }
   }
-  public function trainDirections(Request $request)
+  public function trainDirections()
   {
     try {
       $train_directions = TrainDirection::select('id', 'name')->get();
 
-      Log::info("train_directions data are ");
-      Log::info($train_directions);
+      Log::info("train_directions_data",['DATA'=>$train_directions]);
       return response()->json($train_directions);
     } catch (\Throwable $th) {
-      //throw $th;
-      Log::error($th->getMessage());
+        Log::error(json_encode($this->errorPayload($th)));
       return response()->json($th->getMessage());
-
     }
   }
 
-  public function genders(Request $request)
+  public function genders()
   {
     try {
       $genders = Gender::select('id', 'gender')->get();
 
-      Log::info("genders data are ");
-      Log::info($genders);
+      Log::info("genders_data",['DATA'=>$genders]);
       return response()->json($genders);
     } catch (\Throwable $th) {
-      //throw $th;
-      Log::error($th->getMessage());
+        Log::error(json_encode($this->errorPayload($th)));
       return response()->json($th->getMessage());
-
     }
   }
 
-  public function deviceTypes(Request $request)
+  public function deviceTypes()
   {
     try {
       $deviceTypes = DeviceType::select('id', 'type_id', 'description')->get();
-      Log::info("deviceTypes data are ");
-      Log::info($deviceTypes);
+      Log::info("deviceTypes_data",['DATA'=>$deviceTypes]);
+;
       return response()->json($deviceTypes);
     } catch (\Throwable $th) {
-      //throw $th;
-      Log::error($th->getMessage());
+        Log::error(json_encode($this->errorPayload($th)));
       return response()->json($th->getMessage());
-
     }
   }
 
-  public function operatorTypes(Request $request)
+  public function operatorTypes()
   {
     try {
       $operatorTypes = OperatorType::select('id', 'name', 'code')->latest('id')->get();
       return response()->json($operatorTypes);
     } catch (\Throwable $th) {
-      //throw $th;
-      \Illuminate\Support\Facades\Log::error($th->getMessage());
+        Log::error(json_encode($this->errorPayload($th)));
       return response()->json($th->getMessage());
-
     }
   }
 
-  public function onOffTickets(Request $request)
+  public function onOffTickets()
   {
     try {
         $onOffTickets = DB::table('train_sales_types')->get();
 
-      Log::info("onOffTickets data are ");
-      Log::info($onOffTickets);
+      Log::info("onOffTickets_data",['DATA'=>$onOffTickets]);
+
       return response()->json($onOffTickets);
     } catch (\Throwable $th) {
-      //throw $th;
-      Log::error($th->getMessage());
+        Log::error(json_encode($this->errorPayload($th)));
       return response()->json($th->getMessage());
-
     }
   }
 
-  public function operatorCategory(Request $request){
+  public function operatorCategory(){
     try {
-        $operatorCategories = \Illuminate\Support\Facades\DB::table('operator_categories')->get();
+        $operatorCategories = DB::table('operator_categories')->get();
 
-      \Illuminate\Support\Facades\Log::info("operatorCategories data are ");
-      \Illuminate\Support\Facades\Log::info($operatorCategories);
+      Log::info("operatorCategories_data",['DATA'=>$operatorCategories]);
+
       return response()->json($operatorCategories);
     } catch (\Throwable $th) {
-      \Illuminate\Support\Facades\Log::error($th->getMessage());
+        Log::error(json_encode($this->errorPayload($th)));
       return response()->json($th->getMessage());
-
     }
   }
 
-  public function provinces(Request $request)
+  public function provinces()
   {
     try {
       $provinces = Province::select('id', 'name', )->latest('id')->get();
 
-      Log::info("provinces data are ");
-      Log::info($provinces);
+      Log::info("provinces_data",['DATA'=>$provinces]);
       return response()->json($provinces);
     } catch (\Throwable $th) {
-      //throw $th;
-      Log::error($th->getMessage());
+        Log::error(json_encode($this->errorPayload($th)));
       return response()->json($th->getMessage());
-
     }
   }
 }

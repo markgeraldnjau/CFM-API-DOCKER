@@ -57,7 +57,7 @@ class CargoPriceController extends Controller
             if ($searchQuery !== null) {
                 $query->where(function ($query) use ($searchQuery) {
                     $query->where('cp.charge', 'like', "%$searchQuery%")
-                        ->where('cc.name', 'like', "%$searchQuery%");
+                    ->where('cc.name', 'like', "%$searchQuery%");
                 });
             }
 

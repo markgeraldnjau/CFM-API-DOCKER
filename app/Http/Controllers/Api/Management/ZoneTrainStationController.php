@@ -7,14 +7,27 @@ use App\Http\Controllers\Controller;
 use App\Models\ZoneTrainStation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use App\Traits\CommonTrait;
 
 class ZoneTrainStationController extends Controller
 {
+    use CommonTrait;
     /**
      * Display a listing of the resource.
      */
     public function index(Request $request)
     {
+        $validator = validator($request->all(), [
+            "items_per_page" => "nullable|numeric",
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         try {
             $zoneTrainStations = ZoneTrainStation::with([
                 'zone:id,name',
@@ -26,56 +39,10 @@ class ZoneTrainStationController extends Controller
                     ])->latest('id')->paginate($request->items_per_page);
             return response()->json($zoneTrainStations);
         } catch (\Throwable $th) {
-            Log::error($th->getMessage());
+            Log::error(json_encode($this->errorPayload($th)));
             return response()->json(["error" => $th->getMessage()]);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
 
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
-    {
-        //
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(ZoneTrainStation $zoneTrainStation)
-    {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(ZoneTrainStation $zoneTrainStation)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, ZoneTrainStation $zoneTrainStation)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(ZoneTrainStation $zoneTrainStation)
-    {
-        //
-    }
 }

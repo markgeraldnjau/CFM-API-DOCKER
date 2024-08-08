@@ -8,12 +8,12 @@ use App\Http\Requests\Wagon\UpdateWagonLayoutRequest;
 use App\Http\Requests\Wagon\WagonLayoutRequest;
 use App\Models\TrainWagonClass;
 use App\Models\Wagon;
-use App\Models\Wagon\Cabin;
 use App\Models\Wagon\Seat;
 use App\Models\Wagon\WagonLayout;
 use App\Models\Wagon\WagonManufacture;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
+use App\Traits\CommonTrait;
 use App\Traits\checkAuthPermsissionTrait;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
@@ -22,7 +22,7 @@ use Illuminate\Support\Facades\Log;
 
 class WagonLayoutController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait;
+    use ApiResponse,CommonTrait, AuditTrail, checkAuthPermsissionTrait;
 
     /**
      * Display a listing of the resource.
@@ -30,7 +30,20 @@ class WagonLayoutController extends Controller
     public function index(Request $request)
     {
         //
-        $searchQuery = $request->input('search_query');
+        $validator = validator($request->all(), [
+            'search_query' => 'nullable|string|max:255',
+            'item_per_page' => 'nullable|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $searchQuery = strip_tags($request->input('search_query'));
         $itemPerPage = $request->input('item_per_page', 10);
         try {
             $query = WagonLayout::select(
@@ -57,39 +70,33 @@ class WagonLayoutController extends Controller
             if ($searchQuery !== null) {
                 $query->where(function ($query) use ($searchQuery) {
                     $query->where('wagon_layouts.name', 'like', "%$searchQuery%")
-                        ->orWhere('wm.name', 'like', "%$searchQuery%")
-                        ->orWhere('c.name', 'like', "%$searchQuery%");
+                        ->orWhere('wm.name', 'like', "%$searchQuery%");
                 });
             }
             $wagonLayouts = $query->orderByDesc('wagon_layouts.updated_at')->paginate($itemPerPage);
 
             if (!$wagonLayouts) {
-                throw new RestApiException(404, 'No wagon layouts found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No wagon layouts found!');
             }
             $this->auditLog("View Wagon Layouts", PORTAL, null, null);
             return $this->success($wagonLayouts, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
+
 
     /**
      * Store a newly created resource in storage.
      */
     public function store(WagonLayoutRequest $request)
     {
-        //
+
+
         DB::beginTransaction();
         try {
             $class = TrainWagonClass::findOrFail($request->class_id, ['name']);
@@ -108,16 +115,20 @@ class WagonLayoutController extends Controller
                 'aisle_interval' => $request->aisle_interval ?? 0,
             ];
             $wagonLayout = WagonLayout::create($payload);
+            if(!$wagonLayout){
+                DB::rollBack();
+                return $this->success($wagonLayout, SOMETHING_WENT_WRONG);
+            }
              $this->auditLog("Create Wagon Layouts: ". $manufacture->name .'-'. $class->name, PORTAL, $payload, $payload);
             DB::commit();
             return $this->success($wagonLayout, DATA_SAVED);
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -126,7 +137,13 @@ class WagonLayoutController extends Controller
      */
     public function show(string $token)
     {
-        //
+        if (is_null($token)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         try {
             $wagonLayout = WagonLayout::where('wagon_layouts.token', $token)->select(
                 'wagon_layouts.id',
@@ -164,7 +181,7 @@ class WagonLayoutController extends Controller
                 ->orderBy('row')->get();
 
             if (!$wagonLayout) {
-                throw new RestApiException(404, 'No wagon layouts found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No wagon layouts found!');
             }
 
             $data = [
@@ -178,30 +195,29 @@ class WagonLayoutController extends Controller
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
 
     /**
      * Update the specified resource in storage.
      */
     public function update(UpdateWagonLayoutRequest $request, string $wagonLayoutId)
     {
-        //
+        if (is_null($wagonLayoutId)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         DB::beginTransaction();
         try {
             $wagonLayout = WagonLayout::findOrFail($wagonLayoutId);
@@ -228,21 +244,27 @@ class WagonLayoutController extends Controller
             DB::commit();
             return $this->success($wagonLayout, DATA_UPDATED);
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $token)
+    public function destroy($token)
     {
-        //
+        if (is_null($token)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         try {
             $wagonLayout = WagonLayout::where('token', $token)->firstOrFail();
             if ($wagonLayout->wagons){
@@ -255,11 +277,11 @@ class WagonLayoutController extends Controller
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }

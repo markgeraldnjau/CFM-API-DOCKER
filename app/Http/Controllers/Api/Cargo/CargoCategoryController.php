@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Cargo;
 
 use App\Exceptions\RestApiException;
+use App\Exceptions\ValidationException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Cargo\CargoCategoryRequest;
 use App\Http\Requests\Cargo\UpdateCargoCategoryRequest;

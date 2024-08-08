@@ -7,59 +7,86 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Operator\OperatorRequest;
 use App\Http\Requests\Operator\UpdateOperatorRequest;
 use App\Models\Operator;
-use App\Models\Role;
-use App\Models\User;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\AuthTrait;
+use App\Traits\CommonTrait;
 use App\Traits\checkAuthPermsissionTrait;
 use App\Traits\OperatorTrait;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
 class OperatorController extends Controller
 {
-    use ApiResponse, OperatorTrait, checkAuthPermsissionTrait, AuditTrail, AuthTrait;
+    use ApiResponse, CommonTrait, OperatorTrait, checkAuthPermsissionTrait, AuditTrail, AuthTrait;
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        //
+        $validatedData = validator($request->all(), [
+            'status' => [
+                'nullable',
+                'char:1',
+                Rule::in([ACTIVE_STATUS, INACTIVE_STATUS]),
+            ],
+
+        ]);
+        if ($validatedData->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validatedData->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         try {
+            $tableColumns = [
+                'id',
+                'operator_id',
+                'full_name',
+                'username',
+                'phone',
+                'email',
+                'operator_img',
+                'password',
+                'agent_number',
+                'id_number',
+                'train_line_id',
+                'operator_category_id',
+                'operator_type_code',
+                'status',
+                'password_status',
+                'password_last_changes',
+                'last_update_time',
+                'station_id',
+                'created_at'
+            ];
+
             if (isset($request->status)) {
-                $operators = Operator::where('status', $request->input('status'))->orderBy('id','desc')->get();
+                $operators = Operator::select($tableColumns)->where('status', $request->input('status'))->orderBy('id', 'desc')->get();
             } else {
-                $operators = Operator::orderBy('id','desc')->get();
+                $operators = Operator::select($tableColumns)->orderBy('id', 'desc')->get();
             }
 
             return $this->success($operators, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?: 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?: HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?: SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
 
     /**
      * Store a newly created resource in storage.
      */
     public function store(OperatorRequest $request)
     {
-        //
+
         DB::beginTransaction();
         try {
             $password = $this->generateAlphanumericPassword();
@@ -75,20 +102,20 @@ class OperatorController extends Controller
                 'password' => $password
             ];
 
-            $response = $this->createOperator((object)$data);
-            if (!$response){
-                Log::error("Error on register operator: ". json_encode($request));
+            $response = $this->createOperator((object) $data);
+            if (!$response) {
+                Log::error("Error on register operator: " . json_encode($request));
                 DB::rollBack();
                 return $this->error(null, SOMETHING_WENT_WRONG);
             }
 
-            $this->auditLog("Create Operator: ". $request->full_name, PORTAL, $request, $request);
+            $this->auditLog("Create Operator: " . $request->full_name, PORTAL, $request, $request);
             DB::commit();
             return $this->success(null, DATA_SAVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            $statusCode = $e->getCode() ?? 500;
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -97,44 +124,51 @@ class OperatorController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show($id)
     {
-        //
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         try {
             $operator = Operator::findOrFail($id);
             if (!$operator) {
-                return $this->error(null, 'No Operator found!', 404);
+                return $this->error(null, 'No Operator found!', HTTP_NOT_FOUND);
             }
 
-            $this->auditLog("View Operator: ". $operator->full_name, PORTAL, null, null);
+            $this->auditLog("View Operator: " . $operator->full_name, PORTAL, null, null);
             return $this->success($operator, DATA_RETRIEVED);
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
 
     /**
      * Update the specified resource in storage.
      */
-    public function update(UpdateOperatorRequest $request, string $id)
+    public function update(UpdateOperatorRequest $request, $id)
     {
-        //
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         DB::beginTransaction();
         try {
             $data = [
@@ -148,32 +182,24 @@ class OperatorController extends Controller
                 'station_id' => $request->station_id,
             ];
 
-            $response = $this->updateOperator((object)$data, $id);
+            $response = $this->updateOperator((object) $data, $id);
 
-            if (!$response){
-                Log::error("Error on register operator: ". json_encode($request));
+            if (!$response) {
+                Log::error("Error on register operator: " . json_encode($request));
                 DB::rollBack();
                 return $this->error(null, SOMETHING_WENT_WRONG);
             }
 
-            $this->auditLog("Create Operator: ". $request->full_name, PORTAL, $request, $request);
+            $this->auditLog("Create Operator: " . $request->full_name, PORTAL, $request, $request);
             DB::commit();
             return $this->success(null, DATA_SAVED);
         } catch (\Exception $e) {
-
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            $statusCode = $e->getCode() ?? 500;
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
-    }
 }

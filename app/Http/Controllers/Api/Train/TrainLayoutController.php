@@ -10,6 +10,7 @@ use App\Models\Train;
 use App\Models\Train\TrainLayout;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
+use App\Traits\CommonTrait;
 use App\Traits\checkAuthPermsissionTrait;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
@@ -18,15 +19,27 @@ use Illuminate\Support\Facades\Log;
 
 class TrainLayoutController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait;
+    use ApiResponse, AuditTrail,CommonTrait, checkAuthPermsissionTrait;
 
     /**
      * Display a listing of the resource.
      */
     public function index(Request $request)
     {
-        //
-        $searchQuery = $request->input('search_query');
+        $validator = validator($request->all(), [
+            'search_query' => 'nullable|string|max:255',
+            'item_per_page' => 'nullable|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $searchQuery = strip_tags($request->input('search_query'));
         $itemPerPage = $request->input('item_per_page', 10);
         try {
             $query = TrainLayout::select(
@@ -51,8 +64,8 @@ class TrainLayoutController extends Controller
             $this->auditLog("View Train layouts", PORTAL, null, null);
             return $this->success($trainLayout, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -60,7 +73,7 @@ class TrainLayoutController extends Controller
 
     public function allTrainLayouts(): \Illuminate\Http\JsonResponse
     {
-        //
+
         try {
             $trainLayouts = TrainLayout::select(
                 'train_layouts.id',
@@ -75,35 +88,30 @@ class TrainLayoutController extends Controller
             )->join('trains as t', 't.id', 'train_layouts.train_id')->get();
 
             if (!$trainLayouts) {
-                throw new RestApiException(404, 'No train layout found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No train layout found!');
             }
             $this->auditLog("View Train Layouts", PORTAL, null, null);
             return $this->success($trainLayouts, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
+
 
     /**
      * Store a newly created resource in storage.
      */
     public function store(TrainLayoutRequest $request)
     {
-        //
+
+        $train = Train::findOrFail($request->train_id, ['id', 'train_number']);
+
         DB::beginTransaction();
         try {
-            $train = Train::findOrFail($request->train_id, ['id', 'train_number']);
             $payload = [
                 'train_id' => $request->train_id,
             ];
@@ -124,7 +132,7 @@ class TrainLayoutController extends Controller
                 ];
                 $trainWagon = Train\TrainWagon::updateOrCreate($payload, $payload);
 
-                if (!$trainWagon){
+                if (!$trainWagon) {
                     return $this->error(null, "Failed to save wagon data, please try again!");
                 }
             }
@@ -135,16 +143,16 @@ class TrainLayoutController extends Controller
                 'total_standing_seats' => $numberOfStandingSeats,
                 'total_seats' => $numberOfStandingSeats + $numberOfNormalSeats,
             ]);
-            $this->auditLog("Create Train Layout: ". $train->train_number, PORTAL, $payload, $payload);
+            $this->auditLog("Create Train Layout: " . $train->train_number, PORTAL, $payload, $payload);
             DB::commit();
             return $this->success($trainLayout, DATA_SAVED);
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -153,7 +161,7 @@ class TrainLayoutController extends Controller
      */
     public function show(string $token)
     {
-        //
+
         try {
             $trainLayout = DB::table('train_layouts as tl')->select(
                 'tl.id',
@@ -186,38 +194,31 @@ class TrainLayoutController extends Controller
             $this->auditLog("View Train Layouts", PORTAL, null, null);
             return $this->success($data, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
 
     /**
      * Update the specified resource in storage.
      */
     public function update(UpdateTrainLayoutRequest $request, string $trainLayoutId)
     {
-        //
+        $trainLayout = TrainLayout::findOrFail($trainLayoutId);
         DB::beginTransaction();
         try {
-            $trainLayout = TrainLayout::findOrFail($trainLayoutId);
+
             $oldData = clone $trainLayout;
 
             //delete Removed Wagons
             $existingWagonIds = array_column($request->existing_wagons, 'wagon_id');
 
-            if (Train\TrainWagon::whereNotIn('wagon_id', $existingWagonIds)->where('train_layout_id', $request->id)->exists()){
+            if (Train\TrainWagon::whereNotIn('wagon_id', $existingWagonIds)->where('train_layout_id', $request->id)->exists()) {
                 $deleteWagons = Train\TrainWagon::whereNotIn('wagon_id', $existingWagonIds)->where('train_layout_id', $request->id)->delete();
-                if (!$deleteWagons){
+                if (!$deleteWagons) {
                     return $this->error(null, "Failed to update, existing wagons!");
                 }
             }
@@ -229,7 +230,7 @@ class TrainLayoutController extends Controller
                 ];
                 $trainWagon = Train\TrainWagon::updateOrCreate($payload, $payload);
 
-                if (!$trainWagon){
+                if (!$trainWagon) {
                     return $this->error(null, "Failed to save wagon data, please try again!");
                 }
             }
@@ -254,25 +255,19 @@ class TrainLayoutController extends Controller
                 'total_seats' => $wagonData->total_seats,
             ]);
 
-            $this->auditLog("Update Train Layout for Train: ". $trainLayout->train_id, PORTAL, $oldData, $trainLayout);
+            $this->auditLog("Update Train Layout for Train: " . $trainLayout->train_id, PORTAL, $oldData, $trainLayout);
 
             DB::commit();
             return $this->success($trainLayout, DATA_UPDATED);
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
-    }
+
 }

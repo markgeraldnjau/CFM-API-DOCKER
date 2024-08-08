@@ -6,13 +6,14 @@ use App\Exceptions\RestApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Train\ScheduleRequest;
 use App\Http\Requests\Train\UpdateScheduleRequest;
-use App\Models\Train;
+
 use App\Models\Train\Schedule;
-use App\Models\Wagon\WagonManufacture;
+
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
+use App\Traits\CommonTrait;
 use App\Traits\checkAuthPermsissionTrait;
-use Carbon\Carbon;
+
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,13 +21,25 @@ use Illuminate\Support\Facades\Log;
 
 class ScheduleController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait;
+    use ApiResponse, AuditTrail, CommonTrait, checkAuthPermsissionTrait;
 
     /**
      * Display a listing of the resource.
      */
     public function index(Request $request)
     {
+        $validator = validator($request->all(), [
+            'search_query' => 'nullable|string|max:255',
+            'item_per_page' => 'nullable|integer|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         $searchQuery = $request->input('search_query');
         $itemPerPage = $request->input('item_per_page', 10);
         try {
@@ -53,18 +66,17 @@ class ScheduleController extends Controller
                 )->whereNull('sc.deleted_at');
             if ($searchQuery !== null) {
                 $query->where(function ($query) use ($searchQuery) {
-                        $query->where('t.train_number', 'like', "%$searchQuery%")
+                    $query->where('t.train_number', 'like', "%$searchQuery%")
                         ->where('depart_s.station_name', 'like', "%$searchQuery%")
                         ->where('dest_s.departure_time', 'like', "%$searchQuery%");
                 });
             }
             $schudele = $query->orderByDesc('sc.updated_at')->paginate($itemPerPage);
 
-            // $this->auditLog("View Train Schedules", PORTAL, null, null);
             return $this->success($schudele, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -73,6 +85,18 @@ class ScheduleController extends Controller
 
     public function todaySchedules(Request $request)
     {
+        $validator = validator($request->all(), [
+            'search_query' => 'nullable|string|max:255',
+            'item_per_page' => 'nullable|integer|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
         $searchQuery = $request->input('search_query');
         $itemPerPage = $request->input('item_per_page', 10);
         $todayDayOfWeek = now()->dayOfWeekIso;
@@ -110,8 +134,8 @@ class ScheduleController extends Controller
             $this->auditLog("View Train Schedules", PORTAL, null, null);
             return $this->success($schudele, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -142,13 +166,13 @@ class ScheduleController extends Controller
                 )->whereNull('sc.deleted_at')->get();
 
             if (!$schedules) {
-                throw new RestApiException(404, 'No schedule found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No schedule found!');
             }
             $this->auditLog("View train schedules", PORTAL, null, null);
             return $this->success($schedules, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -163,6 +187,7 @@ class ScheduleController extends Controller
         DB::beginTransaction();
         try {
             $exists = DB::table('schedules')
+                ->select('id')
                 ->where('day_of_the_week', $request->day_of_the_week)
                 ->where('departure_time', $request->departure_time)
                 ->where('est_destination_time', $request->est_destination_time)
@@ -177,10 +202,10 @@ class ScheduleController extends Controller
                 ->select('t.train_number', 't.id', 't.start_stop_id', 't.end_stop_id')->where('l.id', $request->train_layout_id)->first();
 
             if (!$train) {
-                throw new RestApiException(404, 'No train found!, contact admin for support');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No train found!, contact admin for support');
             }
 
-            if ($request->day_of_the_week == ALL_DAYS){
+            if ($request->day_of_the_week == ALL_DAYS) {
                 $allDays = [MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY];
                 foreach ($allDays as $day) {
                     $payload = [
@@ -209,22 +234,28 @@ class ScheduleController extends Controller
                 ];
                 $schedule = Schedule::updateOrCreate($payload);
             }
-            $this->auditLog("Create train schedule for : ". $train->train_number, PORTAL, $payload, $payload);
+            $this->auditLog("Create train schedule for : " . $train->train_number, PORTAL, $payload, $payload);
             DB::commit();
             return $this->success($schedule, DATA_SAVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
     /**
      * Display the specified resource.
      */
-    public function show(string $token)
+    public function show($token)
     {
-        //
+        if (is_null($token)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         try {
             $schedule = DB::table('schedules as sc')
                 ->join('train_layouts as tl', 'tl.id', 'sc.train_layout_id')
@@ -247,40 +278,40 @@ class ScheduleController extends Controller
                 )->where('sc.token', $token)->whereNull('sc.deleted_at')->first();
 
             if (!$schedule) {
-                throw new RestApiException(404, 'No train schedule found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No train schedule found!');
             }
 
-            $this->auditLog("View Train schedule: ". $schedule->train_number, PORTAL, $schedule, $schedule);
+            $this->auditLog("View Train schedule: " . $schedule->train_number, PORTAL, $schedule, $schedule);
             return $this->success($schedule, DATA_RETRIEVED);
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (\Exception $e) {
-
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
+
 
     /**
      * Update the specified resource in storage.
      */
     public function update(ScheduleRequest $request, string $scheduleId)
     {
-        //
+        if (is_null($scheduleId) || !is_numeric($scheduleId)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         DB::beginTransaction();
         try {
 
             $exists = DB::table('schedules')
+                ->select('id')
                 ->where('day_of_the_week', $request->day_of_the_week)
                 ->where('departure_time', $request->departure_time)
                 ->where('est_destination_time', $request->est_destination_time)
@@ -298,7 +329,7 @@ class ScheduleController extends Controller
                 ->select('t.train_number', 't.start_stop_id', 't.end_stop_id')->where('l.id', $request->train_layout_id)->first();
 
             if (!$train) {
-                throw new RestApiException(404, 'No train found!, contact admin for support');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No train found!, contact admin for support');
             }
             $payload = [
                 'day_of_the_week' => $request->day_of_the_week,
@@ -309,35 +340,41 @@ class ScheduleController extends Controller
                 'destination_station_id' => $train->end_stop_id,
             ];
             $schedule->update($payload);
-            $this->auditLog("Update train schedule for : ". $train->train_number, PORTAL, $oldData, $payload);
+            $this->auditLog("Update train schedule for : " . $train->train_number, PORTAL, $oldData, $payload);
             DB::commit();
             return $this->success($schedule, DATA_SAVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $token)
+    public function destroy($token)
     {
-        //
+        if (is_null($token)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         try {
             $schedule = Schedule::where('token', $token)->firstOrFail();
             $schedule->delete();
-            $this->auditLog("Delete Train Schedule: ". $schedule->train_layout_id, PORTAL, $schedule, null);
+            $this->auditLog("Delete Train Schedule: " . $schedule->train_layout_id, PORTAL, $schedule, null);
             return $this->success(null, DATA_DELETED);
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }

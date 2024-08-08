@@ -8,22 +8,18 @@ use App\Models\Permission;
 use App\Models\RoleHasPermission;
 use App\Models\RolePermission;
 use App\Models\SysModule;
-use App\Models\Wagon;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
+use App\Traits\CommonTrait;
 use App\Traits\AuthTrait;
-use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use App\Http\Requests\StoreRoleRequest;
-use App\Http\Resources\RoleResource;
 use App\Models\Role;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class PermissionController extends Controller
 {
-    use ApiResponse, AuthTrait, AuditTrail;
+    use ApiResponse,CommonTrait, AuthTrait, AuditTrail;
     public function getSysModules()
     {
         try {
@@ -76,8 +72,8 @@ class PermissionController extends Controller
 
             return $this->success($modules, DATA_RETRIEVED);
         }catch(\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -147,9 +143,15 @@ class PermissionController extends Controller
     }
 
     public function attachPermission($id, Request $request){
+        // Validate the request data
+        $validatedData = $request->validate([
+            'permissions' => 'required|array',
+            'permissions.*' => 'integer|exists:permissions,id',
+        ]);
+
         try {
             // Get permissions
-            $permissions = $request['permissions'];
+            $permissions = $validatedData['permissions'];
 
 
             RolePermission::where('role_id', $id)->delete();
@@ -166,11 +168,11 @@ class PermissionController extends Controller
             }
 
             DB::commit();
-    return $this->success(null,DATA_SAVED);
+            return $this->success(null,DATA_SAVED);
         } catch (\Exception $e){
             DB::rollBack();
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -184,8 +186,8 @@ class PermissionController extends Controller
                 ->get();
             return $this->success($modules, DATA_RETRIEVED);
         }catch(\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -199,8 +201,8 @@ class PermissionController extends Controller
                 ->pluck('permission_id');
             return $this->success($modules, DATA_RETRIEVED);
         }catch(\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -256,8 +258,8 @@ class PermissionController extends Controller
 
             return $this->success($sysModuleData, DATA_RETRIEVED);
         }catch(\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -330,9 +332,8 @@ class PermissionController extends Controller
             }
             return $this->success($modules, DATA_RETRIEVED);
         }catch(\Exception $e) {
-
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -345,11 +346,11 @@ class PermissionController extends Controller
 
             $role = Role::where('token', $request->role_token)->select('id', 'name')->first();
             if (empty($role)){
-                return $this->error(null, "invalid role, contact admin for support", 404);
+                return $this->error(null, "invalid role, contact admin for support", HTTP_NOT_FOUND);
             }
 
             $structuredActions = $this->contructSelectedActionsForModule($request->actions);
-//            dd($structuredActions);
+
 
             foreach ($structuredActions as $structuredAction) {
 
@@ -365,8 +366,6 @@ class PermissionController extends Controller
                            'actions' => json_encode($structuredAction['actions']),
                             'url' => $sysModule->base_route
                         ]);
-
-//                    dd($newRolePermission);
                     if (!$newRolePermission){
                         return $this->error(null, "Error on updating permissions for a module, contact admin for support", 404);
                     }
@@ -383,9 +382,9 @@ class PermissionController extends Controller
             DB::commit();
             return $this->success(null, DATA_SAVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 

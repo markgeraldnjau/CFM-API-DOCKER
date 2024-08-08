@@ -6,40 +6,46 @@ use App\Events\SendMail;
 use App\Events\SendSms;
 use App\Exceptions\RestApiException;
 use App\Http\Controllers\Controller;
-use App\Http\Requests\User\OperatorRequest;
 use App\Http\Requests\User\UserRequest;
-use App\Http\Resources\UserResource;
-use App\Models\Card;
-use App\Models\Customer;
 use App\Models\Role;
 use App\Models\User;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\AuthTrait;
+use App\Traits\CommonTrait;
 use App\Traits\OperatorTrait;
-use http\Env\Response;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
-use mysql_xdevapi\Exception;
 
 class UserController extends Controller
 {
-    use ApiResponse, OperatorTrait, AuditTrail, AuthTrait;
+    use ApiResponse, CommonTrait, OperatorTrait, AuditTrail, AuthTrait;
 
     public function index(Request $request)
     {
+        $validator = validator($request->all(), [
+            'search_query' => 'nullable|string|max:255'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => $validator->errors()
+            ], HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $searchQuery = strip_tags($request->input('search_query'));
         try {
 
-            $searchQuery = $request->search_query;
             $query = DB::table('users as u')->join('roles as r', 'r.id', 'u.role_id')
                 ->select(
-            "u.id",
+                    "u.id",
                     "u.token",
                     "u.first_name",
                     "u.last_name",
@@ -54,16 +60,6 @@ class UserController extends Controller
                     "u.gender",
                     'u.updated_at',
                 )->whereNull('u.deleted_at');
-//            if (isset($request->type)) {
-//                if ($request->input('type') == 'A') {
-//                    Log::info('fetch active users');
-//                    $query->where('account_status', $request->input('type'));
-//                } else {
-//                    Log::info('fetch inactive users');
-//                    $query->where('account_status', $request->input('type'));
-//
-//                }
-//            }
 
             if (!empty($searchQuery)) {
                 $query->where(function ($query) use ($searchQuery) {
@@ -77,22 +73,12 @@ class UserController extends Controller
             $users = $query->orderByDesc('id')->paginate(10);
 
             return $this->success($users, DATA_RETRIEVED);
-        }catch(\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+        } catch (\Exception $e) {
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
-    }
-
-    /**
-     * Show the form for creating a new resource.
-     *
-     * @return \Illuminate\Http\Response
-     */
-    public function create()
-    {
-        //
     }
 
 
@@ -106,7 +92,7 @@ class UserController extends Controller
 
             // Check If Operator Role
             if (empty($role)) {
-                return $this->error(null, 'Undefined Role', 404);
+                return $this->error(null, 'Undefined Role', HTTP_NOT_FOUND);
             }
 
             $user = User::create([
@@ -124,8 +110,8 @@ class UserController extends Controller
                 'remember_token' => Str::random(60),
             ]);
 
-            if (empty($user)){
-                Log::error("Error on register user: ". json_encode($request));
+            if (empty($user)) {
+                Log::error("Error on register user: " . json_encode($request));
                 DB::rollBack();
                 return $this->error(null, SOMETHING_WENT_WRONG);
             }
@@ -145,10 +131,10 @@ class UserController extends Controller
                     'station_id' => $request->station_id,
                     'password' => $password
                 ];
-                $response = $this->createOperator((object)$data);
+                $response = $this->createOperator((object) $data);
 
-                if (!$response){
-                    Log::error("Error on register user operator: ". json_encode($request));
+                if (!$response) {
+                    Log::error("Error on register user operator: " . json_encode($request));
                     DB::rollBack();
                     return $this->error(null, SOMETHING_WENT_WRONG);
                 }
@@ -163,14 +149,13 @@ class UserController extends Controller
 
             Log::info(json_encode($payload));
             event(new SendSms(SEND_USER_CREDENTIALS, $payload));
-
-            $this->auditLog("Create User: ". $request->first_name . $request->last_name, PORTAL, $request, $request);
+            $this->auditLog("Create User: " . $request->first_name . $request->last_name, PORTAL, $request, $request);
             DB::commit();
             return $this->success(null, DATA_SAVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            $statusCode = $e->getCode() ?? 500;
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -186,14 +171,20 @@ class UserController extends Controller
      */
     public function show($token)
     {
-        //
+        if (is_null($token) || !is_numeric($token)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
+        }
         try {
 
             $user = User::where('token', $token)->first();
             return $this->success($user, DATA_RETRIEVED);
-        }catch(\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+        } catch (\Exception $e) {
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
@@ -207,11 +198,26 @@ class UserController extends Controller
      */
     public function edit($id)
     {
-        $user = User::find($id);
-        if (!$user) {
-            return response()->json(['message' => 'user not found'], 404);
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], HTTP_BAD_REQUEST);
         }
-        return response()->json($user, 200);
+        $user = User::findOrFail($id);
+        try {
+            if (!$user) {
+                return response()->json(['message' => 'user not found'], HTTP_NOT_FOUND);
+            }
+            return response()->json($user, HTTP_OK);
+        } catch (\Throwable $th) {
+            Log::error(json_encode($this->errorPayload($th)));
+            $statusCode = $th->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
+            $errorMessage = $th->getMessage() ?? SERVER_ERROR;
+            throw new RestApiException($statusCode, $errorMessage);
+        }
+
     }
 
     /**
@@ -223,7 +229,13 @@ class UserController extends Controller
      */
     public function update(Request $request, $id)
     {
-
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], 400);
+        }
         $validatedData = $request->validate([
             'first_name' => 'required|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -268,11 +280,11 @@ class UserController extends Controller
 
             DB::commit();
 
-//            return response()->json(['message' => 'User updated successfully', 'status' => SUCCESS_RESPONSE], 201);
+            //            return response()->json(['message' => 'User updated successfully', 'status' => SUCCESS_RESPONSE], 201);
             return $this->success(null, DATA_SAVED);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             return response()->json(['message' => 'Failed to update user'], 500);
         }
     }
@@ -285,7 +297,19 @@ class UserController extends Controller
      */
     public function destroy($id)
     {
-        $user = User::find($id);
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], 400);
+        }
+        $user = User::findOrFail($id);
+        try {
+            //code...
+        } catch (\Throwable $th) {
+            //throw $th;
+        }
         if (!$user) {
             return response()->json(['message' => 'user not found'], 404);
         }
@@ -296,6 +320,14 @@ class UserController extends Controller
     public function activateUser(Request $request, $id)
     {
         $message = '';
+
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], 400);
+        }
 
         DB::beginTransaction();
         try {
@@ -326,6 +358,13 @@ class UserController extends Controller
 
     public function resetPassword($id)
     {
+        if (is_null($id) || !is_numeric($id)) {
+            return response()->json([
+                'status' => VALIDATION_ERROR,
+                'message' => VALIDATION_FAIL,
+                'errors' => VALIDATION_ERROR_FOR_ID
+            ], 400);
+        }
         DB::beginTransaction();
         try {
             $user = User::findOrFail($id);
@@ -333,7 +372,7 @@ class UserController extends Controller
 
             $newPassword = Str::random(8);
 
-            Log::channel("portal")->info("Reset User Password for: ". $user->first_name . " " .$user->last_name . "( " . $user->id ." ) to password: ". $newPassword);
+            Log::channel("portal")->info("Reset User Password for: " . $user->first_name . " " . $user->last_name . "( " . $user->id . " ) to password: " . $newPassword);
 
             $user->password = Hash::make($newPassword);
             $user->save();
@@ -343,7 +382,7 @@ class UserController extends Controller
                 'new_password' => $user->password
             ];
 
-            $this->auditLog("Reset User's password: ". $user->first_name . " " .$user->last_name, PORTAL, $oldData, $payload);
+            $this->auditLog("Reset User's password: " . $user->first_name . " " . $user->last_name, PORTAL, $oldData, $payload);
 
             DB::commit();
 
@@ -351,11 +390,11 @@ class UserController extends Controller
 
             return $this->success($user, 'Password has been reset successfully.');
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
             throw new RestApiException(404, 'User not found.');
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
             throw new RestApiException(500, 'Failed to reset password.');
         }

@@ -60,8 +60,8 @@ class CargoSubCategoryController extends Controller
             $cargoCategory = CargoCategory::where('token', $token)->firstOrFail();
 
             $data = [
-                'category' => $cargoCategory,
-                'sub_categories' => $subCategories,
+              'category' => $cargoCategory,
+              'sub_categories' => $subCategories,
             ];
             if (!$data) {
                 throw new RestApiException(HTTP_NOT_FOUND, 'No cargo sub category found!');

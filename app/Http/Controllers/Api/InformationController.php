@@ -6,11 +6,11 @@ use App\Exceptions\RestApiException;
 use App\Exceptions\ValidationException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\News\InfoRequest;
-use App\Http\Requests\News\NewsRequest;
 use App\Models\CfmInformation;
 use App\Traits\ApiResponse;
 use App\Traits\AuditTrail;
 use App\Traits\checkAuthPermsissionTrait;
+use App\Traits\CommonTrait;
 use App\Traits\FireBaseTrait;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -23,7 +23,7 @@ use Illuminate\Validation\Rule;
 
 class InformationController extends Controller
 {
-    use ApiResponse, AuditTrail, checkAuthPermsissionTrait, FireBaseTrait;
+    use ApiResponse, AuditTrail, checkAuthPermsissionTrait, FireBaseTrait, CommonTrait;
     /**
      * Display a listing of the resource.
      */
@@ -45,20 +45,13 @@ class InformationController extends Controller
               $this->auditLog("View Information", PORTAL, null, null);
             return $this->success($info, DATA_RETRIEVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
 
     /**
      * Store a newly created resource in storage.
@@ -77,9 +70,9 @@ class InformationController extends Controller
             DB::commit();
             return $this->success($info, DATA_SAVED);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -93,30 +86,23 @@ class InformationController extends Controller
             $info = CfmInformation::where('token', $token)->firstOrFail();
 
             if (!$info) {
-                throw new RestApiException(404, 'No information found!');
+                throw new RestApiException(HTTP_NOT_FOUND, 'No information found!');
             }
             $this->auditLog("View Information : ". $info->title, PORTAL, null, null);
             return $this->success($info, DATA_RETRIEVED);
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            LLog::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
-    }
 
     /**
      * Update the specified resource in storage.
@@ -140,12 +126,12 @@ class InformationController extends Controller
             DB::commit();
             return $this->success($info, DATA_UPDATED);
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -184,7 +170,7 @@ class InformationController extends Controller
                 $body = Str::limit($info->information, 100, '...');
                 $response = $this->sendFirebaseNotificationToAll($title, $body, $info->id, get_class($info));
                 if (!$response){
-                    return $this->error(null, "Something wrong on sending push notification to customer app, try again later", 500);
+                    return $this->error(null, "Something wrong on sending push notification to customer app, try again later", HTTP_INTERNAL_SERVER_ERROR);
                 }
             }
 
@@ -192,12 +178,12 @@ class InformationController extends Controller
             DB::commit();
             return $this->success($info, DATA_UPDATED);
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
+            Log::error(json_encode($this->errorPayload($e)));
             DB::rollBack();
-            throw new RestApiException(500);
+            throw new RestApiException(HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -218,11 +204,11 @@ class InformationController extends Controller
         } catch (RestApiException $e) {
             throw new RestApiException($e->getStatusCode(), $e->getMessage());
         } catch (ModelNotFoundException $e) {
-            Log::error($e->getMessage());
-            throw new RestApiException(404, DATA_NOT_FOUND);
+            Log::error(json_encode($this->errorPayload($e)));
+            throw new RestApiException(HTTP_NOT_FOUND, DATA_NOT_FOUND);
         } catch (\Exception $e) {
-            Log::error($e->getMessage());
-            $statusCode = $e->getCode() ?? 500;
+            Log::error(json_encode($this->errorPayload($e)));
+            $statusCode = $e->getCode() ?? HTTP_INTERNAL_SERVER_ERROR;
             $errorMessage = $e->getMessage() ?? SERVER_ERROR;
             throw new RestApiException($statusCode, $errorMessage);
         }

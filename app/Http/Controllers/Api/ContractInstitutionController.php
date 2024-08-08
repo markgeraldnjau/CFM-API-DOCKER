@@ -3,27 +3,31 @@
 namespace App\Http\Controllers\Api;
 
 use App\Models\ContractInstitution;
-use App\Models\CompanyContract;
+use App\Traits\CommonTrait;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Controller;
 use App\Traits\ApiResponse;
-use App\Exceptions\RestApiException;
-
+use Illuminate\Support\Facades\Validator;
 
 
 class ContractInstitutionController extends Controller
 {
 
-    use ApiResponse;
+    use ApiResponse, CommonTrait;
     public function index(Request $request)
     {
-        // return response()->json([], 200);
+        $validator = Validator::make($request->all(), [
+            'item_per_page' => ['nullable', 'numeric', 'max:255'],
+        ]);
 
+        if ($validator->fails()) {
+            $errors = implode(', ', $validator->errors()->all());
+            return $this->error(null, $errors, HTTP_UNPROCESSABLE_ENTITY);
+        }
 
-        // $contracts = ContractInstitution::get();
-        $contracts = ContractInstitution::paginate($request->items_per_page);
+        $contracts = ContractInstitution::paginate($validator['items_per_page']);
         return response()->json($contracts, 200);
     }
 
@@ -75,41 +79,45 @@ class ContractInstitutionController extends Controller
             DB::commit();
             return $this->success(null,"Contract institution created successfully");
         } catch (\Exception $e) {
-            dd($e);
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to create contract institution'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => 'Failed to create contract institution'], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
 
     public function show($id)
     {
-        $contract = ContractInstitution::find($id);
-        if (!$contract) {
-            return response()->json(['message' => 'Contract institution not found'], 404);
+        try{
+            $contract = ContractInstitution::find($id);
+            if (!$contract) {
+                return response()->json(['message' => 'Contract institution not found'], HTTP_NOT_FOUND);
+            }
+            return response()->json($contract, HTTP_OK);
+        }catch(\Exception $e){
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => 'Failed to fetch contract institution'], HTTP_INTERNAL_SERVER_ERROR);
         }
-        return response()->json($contract, 200);
     }
 
     public function update(Request $request, $id)
     {
         $validatedData = $request->validate([
-            'contractNumber' => 'required',
-            'shortName' => 'required',
-            'registeredName' => 'required',
-            'registrationNumber' => 'required',
-            'address' => 'required',
-            'postalAdress' => 'required',
-            'contactPerson' => 'required',
-            'phoneNumber' => 'required',
-            'contractStatus' => 'required',
-            'contractExpireDate' => 'required',
-            'contractValidity' => 'required',
-            'specialDiscount' => 'required',
-            'limitAmount' => 'required',
-            'startDate' => 'required',
-            'payType' => 'required',
+            'contractNumber' => 'required|string|max:255',
+            'shortName' => 'required|string|max:255',
+            'registeredName' => 'required|string|max:255',
+            'registrationNumber' => 'required|string|max:255',
+            'address' => 'required|string|max:255',
+            'postalAdress' => 'required|string|max:255',
+            'contactPerson' => 'required|string|max:255',
+            'phoneNumber' => 'required|string|max:20',  // Adjust max length as per your schema
+            'contractStatus' => 'required|integer',
+            'contractExpireDate' => 'required|date',
+            'contractValidity' => 'required|integer',
+            'specialDiscount' => 'required|numeric',
+            'limitAmount' => 'required|numeric',
+            'startDate' => 'required|date',
+            'payType' => 'required|integer',
         ]);
 
         DB::beginTransaction();
@@ -117,7 +125,7 @@ class ContractInstitutionController extends Controller
         try {
             $contract = ContractInstitution::find($id);
             if (!$contract) {
-                return response()->json(['message' => 'Contract institution not found'], 404);
+                return response()->json(['message' => 'Contract institution not found'], HTTP_NOT_FOUND);
             }
             $contract->contractNumber = $validatedData['contractNumber'];
             $contract->shortName = $validatedData['shortName'];
@@ -139,11 +147,11 @@ class ContractInstitutionController extends Controller
             $contract->save();
 
             DB::commit();
-            return response()->json(['message' => 'Contract institution updated successfully'], 200);
+            return response()->json(['message' => 'Contract institution updated successfully'], HTTP_OK);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to update contract institution'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => 'Failed to update contract institution'], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -154,15 +162,15 @@ class ContractInstitutionController extends Controller
         try {
             $contract = ContractInstitution::find($id);
             if (!$contract) {
-                return response()->json(['message' => 'Contract institution not found'], 404);
+                return response()->json(['message' => 'Contract institution not found'], HTTP_NOT_FOUND);
             }
             $contract->delete();
             DB::commit();
-            return response()->json(['message' => 'Contract institution deleted successfully'], 200);
+            return response()->json(['message' => 'Contract institution deleted successfully'], HTTP_OK);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error($e->getMessage());
-            return response()->json(['message' => 'Failed to delete contract institution'], 500);
+            Log::error(json_encode($this->errorPayload($e)));
+            return response()->json(['message' => 'Failed to delete contract institution'], HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
