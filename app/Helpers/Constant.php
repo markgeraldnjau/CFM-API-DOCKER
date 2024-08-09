@@ -20,11 +20,15 @@ class ResponseMessages
     const OPERATOR_CREATION_FAILED = 'Failed to create operator';
 }
 
+const DEFAULT_PROVINCE = "Maputo";
+const DEFAULT_LATITUDE = "1.0000";
+const DEFAULT_LONGITUDE = "1.0000";
 
 const VALIDATION_FAIL = "Validation failed";
 const VALIDATION_ERROR = "Error";
 
 const USERNAME_AND_PASSWORD_REQUIRED = "Username And Password Is Required";
+const VALIDATION_ERROR_FOR_ID = "Invalid ID format or ID is null";
 
 // Common Responses
 const LOGIN_SUCCESSFULLY = "Login successfully";
@@ -313,6 +317,7 @@ const BLOCKED_CARD = '42';
 const ACTIVE_CARD_STATUS = 'A';
 const BLOCKED_CARD_STATUS = 'B';
 const INACTIVE_CARD_STATUS = 'I';
+const VALID_STATUS_NAME = 'VALID';
 
 const USED_OTP = 'A';
 const UNSED_OTP = 'I';
@@ -361,3 +366,59 @@ const ACTIVE_CARD_MESSAGE = 'Successfully active card!.';
 const NOT_CHANGE_STATUS = 'Action type is not change status!.';
 
 const HAS_TOO_MANY_ATTEMPTS = 60;
+
+
+//
+const MAX_TRIES = 100;
+const DEVICE_TRIES = 0;
+const CODE_LENGTH = 5;
+const MAX_TRIES_RETURN = '000000';
+
+
+//Customer Mode
+const CUSTOMER_MODE = 'C';
+const CUSTOMER_MODE_RETURN_CODE = '400000001';
+
+const INTERNAL_MODE = 'I';
+const INTERNAL_MODE_RETURN_CODE = '10000001';
+
+const EMPLOYEES_MODE = 'E';
+const EMPLOYEES_MODE_RETURN_CODE = '30000001';
+
+const EXTERNAL_ORGANIZATION_MODE = 'X';
+
+const DEFAULT_MODE_RETURN_CODE = '0000000001';
+
+const OPERATOR_MODE = "O";
+const OPERATOR_MODE_RETURN_CODE = '20000001';
+
+//Device Api Constants
+const ASCENDING_DIRECTION = 1;
+
+const CFM_MAIN_GL = 'CFMGL';
+
+const L0Z0N0 = 'L0Z0N0';
+
+
+//FIeld field_39 values
+const FIELD_39_55 = 55;
+const FIELD_39_75 = 75;
+const FIELD_39_14 = '14';
+const FIELD_39_43 = '43';
+const FIELD_39_41 = '41';
+const FIELD_39_54 = '54';
+const FIELD_39_30 = '30';
+const FIELD_39_12 = '12';
+const LOST_STATUS = 'Lost';
+const EXPIRED_CARD = 'Expired card';
+const CARD_DOES_NOT_EXIST = 'Card does not exist';
+const CARD_TAG_NOT_SENT = 'Card Tag Not sent';
+
+const I_STATUS = 'I';
+const S_STATUS = 'S';
+const L_STATUS = 'L';
+const A_STATUS = 'A';
+const B_STATUS = 'B';
+const COMPANY_CARD_INTERGER = 1;
+
+const MTI_VALUE = '0630';
