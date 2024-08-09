@@ -41,6 +41,15 @@ return [
             'provider' => 'users',
         ],
 
+        'api' => [
+            'driver' => 'passport',
+            'provider' => 'users',
+        ],
+        'customer' => [
+            'driver' => 'passport',
+            'provider' => 'customers',
+        ],
+
         'operator' => [
             'driver' => 'jwt',
             'provider' => 'operators',
@@ -68,6 +77,11 @@ return [
         'users' => [
             'driver' => 'eloquent',
             'model' => App\Models\User::class,
+        ],
+
+        'customers' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\CardCustomer::class,
         ],
 
         'operators' => [
