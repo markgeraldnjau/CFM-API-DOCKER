@@ -1,0 +1,75 @@
+version: "3"
+
+networks:
+    cfm:
+    cfm_api_network:
+
+services:
+    cfm:
+        image: filbertnyakunga/cfm:main
+        environment:
+            MYSQL_DATABASE: cfm_db
+            MYSQL_USER: root
+            MYSQL_PASSWORD: Bcx1234567890.
+            MYSQL_ROOT_PASSWORD: Bcx1234567890.
+            DB_HOST: localhost
+        user: www-data
+        container_name: cfm
+        restart: unless-stopped
+        volumes:
+            - cfm_data:/var/www/html
+            - /var/www/html/vendor
+            - /var/www/html/node_modules
+        ports:
+            - "9000:9000"
+        networks:
+            - cfm
+
+    cfm_nginx:
+        image: filbertnyakunga/cfm_nginx:main
+        container_name: cfm_nginx
+        volumes:
+            - cfm_data:/var/www/html
+        ports:
+            - "80:80"
+        depends_on:
+            - cfm
+        networks:
+            - cfm
+
+    cfm_api:
+        build:
+            context: ./cfm_api
+            dockerfile: Dockerfile
+        environment:
+            MYSQL_DATABASE: cfm_db
+            MYSQL_USER: root
+            MYSQL_PASSWORD: Bcx1234567890.
+            MYSQL_ROOT_PASSWORD: Bcx1234567890.
+            DB_HOST: localhost
+        user: www-data
+        container_name: cfm_api
+        restart: unless-stopped
+        volumes:
+            - cfm_api_data:/var/www/html
+            - /var/www/html/vendor
+        ports:
+            - "9001:9000"
+        networks:
+            - cfm_api_network
+
+    cfm_api_nginx:
+        image: filbertnyakunga/cfm_api_nginx:main
+        container_name: cfm_api_nginx
+        volumes:
+            - cfm_api_data:/var/www/html
+        ports:
+            - "8080:80"
+        depends_on:
+            - cfm_api
+        networks:
+            - cfm_api_network
+
+volumes:
+    cfm_data:
+    cfm_api_data:
