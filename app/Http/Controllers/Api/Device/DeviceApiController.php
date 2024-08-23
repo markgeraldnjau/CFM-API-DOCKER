@@ -9,7 +9,7 @@ use App\Events\SendSms;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreDeviceApiRequest;
 use App\Http\Requests\UpdateDeviceApiRequest;
-use App\Models\DeviceApi;
+
 use App\Models\Operator;
 use App\Models\Transaction\TicketTransaction;
 use App\Traits\CustomerTrait;
@@ -24,6 +24,7 @@ use App\Services\RequestLogger;
 use App\Models\OperatorCollection;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB as FacadesDB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Log as FacadesLog;
 use Illuminate\Support\Facades\Storage;
 
@@ -72,62 +73,6 @@ class DeviceApiController extends Controller
     {
         $this->logger = $logger;
     }
-    /**
-     * Display a listing of the resource.
-     *
-     */
-    public function index()
-    {
-        //
-    }
-
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
-
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(StoreDeviceApiRequest $request)
-    {
-        //
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(DeviceApi $deviceApi)
-    {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(DeviceApi $deviceApi)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(UpdateDeviceApiRequest $request, DeviceApi $deviceApi)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(DeviceApi $deviceApi)
-    {
-        //
-    }
 
     public function get_app_parameters($deviceIMEI, $deviceSerial)
     {
@@ -154,10 +99,97 @@ class DeviceApiController extends Controller
 
     public function db_update($sql,$data){
         DB::update($sql, $data);
-        // $statusId = DB::getPdo()->lastInsertId();
         return true;
     }
 
+    function encryptAES($plaintext, $pw)
+    {
+        $plaintext = json_encode($plaintext);
+        $iv_len = 12;
+        $iv = random_bytes($iv_len);
+        $salt_len = 16;
+        $salt = random_bytes($salt_len);
+
+        $tag = ""; // will be filled by openssl_encrypt
+        $key = hash_pbkdf2('sha256', $pw, $salt, 10000, 32, true);
+
+        $encrypted = openssl_encrypt(
+            $plaintext,
+            "aes-256-gcm",
+            $key,
+            $options = OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING,
+            $iv,
+            $tag,
+            "",
+            16
+        );
+        $result = $iv . $salt . $encrypted . $tag;
+        return base64_encode($result);
+    }
+
+    function decryptMobileRequest($encodedData, $pw)
+    {
+        $decodedData = base64_decode($encodedData);
+
+        // Extract IV, salt, tag, and ciphertext
+        $iv_len = 12;
+        $iv = substr($decodedData, 0, $iv_len);
+        $salt_len = 16;
+        $salt = substr($decodedData, $iv_len, $salt_len);
+        $tag_len = 16;
+        $ciphertext = substr($decodedData, $iv_len + $salt_len, -16); // Exclude last 16 bytes for tag
+        $tag = substr($decodedData, -$tag_len); // Extract last 16 bytes for tag
+
+        // Generate key using PBKDF2
+        $key = hash_pbkdf2('sha256', $pw, $salt, 10000, 32, true);
+
+        // Decrypt using AES-256-GCM
+        $decrypted = openssl_decrypt(
+            $ciphertext,
+            "aes-256-gcm",
+            $key,
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag
+        );
+
+        return $decrypted;
+    }
+
+    //     openssl genrsa -out private.pem 2048
+// openssl rsa -in private.pem -pubout -out public.pem
+
+
+    public static function opensslPrivateDecrypt($data)
+    {
+        $filePath = public_path('assets/public.key');
+        // Check if the file exists
+        if (file_exists($filePath)) {
+            // Read the contents of the file
+            // $fileContents = file_get_contents($filePath);
+            // $privateKeyPath =  'private.pem';
+            $privateKey = openssl_pkey_get_private(file_get_contents($filePath));
+            openssl_private_decrypt(base64_decode($data), $decryptedData, $privateKey);
+
+
+        } else {
+            // Handle the case where the file does not exist
+            return response()->json([
+                'status' => 'error',
+                'message' => 'File not found.'
+            ]);
+        }
+
+
+        return $decryptedData;
+    }
+
+    public static function opensslPrivateEncrypt($data)
+    {
+        $publicKey = 'public.pem';
+        openssl_public_encrypt($data, $encrypted, file_get_contents($publicKey));
+        return base64_encode($encrypted);
+    }
 
     /**
      * Created By : Gabriel R Assenga
@@ -287,29 +319,23 @@ class DeviceApiController extends Controller
         return $status;
     }
 
-    public function update_device_version($imei, $appVersion,$operator)
+    public function insertDeviceVersion($imei, $appVersion, $operator)
     {
-
         $now = Carbon::now();
         $sql = "INSERT INTO `device_details_tracking` (`device_imei`, `app_version`, `operator`,`created_at`)
     VALUES (:deviceImei, :app_version, :operator, :datetime)";
-
-
-
-
         try {
-            $data = ['deviceImei' => $imei,'app_version' => $appVersion,'operator' => $operator,'datetime' => $now ];
-            $result = $this->db_select($sql,$data);
-            $status = 1;
-
-        } catch (Exception $e) {
+            $data = ['deviceImei' => $imei, 'app_version' => $appVersion, 'operator' => $operator, 'datetime' => $now];
+            $result = $this->db_select($sql, $data);
+            $status = (bool)$result;
+        } catch (\Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
             $status = 0;
         }
         return $status;
     }
 
-    public function get_station_list($line)
+    public function get_station_list()
     {
         $sql = "SELECT train_stations.`id`, `station_Name`,`longitude`,`latitude`,thr_Class,frst_Class,sec_Class,class_type ,`province`,stations_lines.line_id,`distance_Maputo`,`is_off_train_ticket_available`
          FROM `train_stations` INNER JOIN cfm_classes ON cfm_classes.id=train_stations.thr_Class
@@ -362,6 +388,11 @@ class DeviceApiController extends Controller
 
         return  $this->msg['operator_allocations'];
     }
+
+
+
+
+
 
 
     public function fetchTrainData()
@@ -896,21 +927,6 @@ class DeviceApiController extends Controller
     }
 
 
-    //Lagguage Details Category
-    public function get_lagguage_categories()
-    {
-        $sql = "SELECT `id`, `name` FROM `cargo_categories` WHERE 1";
-        try {
-
-            $data = [ ];
-            $result = $this->db_select($sql,$data);
-            $this->msg['field_55'] = $result;
-        } catch (Exception $e) {
-            $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();;
-        }
-        return $this->msg['field_55'];
-    }
-
     public function getOperatorCollectionId($receipt_number)
     {
         $sql = "SELECT `id` FROM `operator_collections` WHERE receipt_number=:receipt_number";
@@ -920,6 +936,8 @@ class DeviceApiController extends Controller
             $result = $this->db_select($sql,$data);
 
         } catch (Exception $e) {
+            Log::channel('pos')->error(json_encode($this->errorPayload($e)));
+            return false;
         }
         return $result;
     }
@@ -933,7 +951,7 @@ class DeviceApiController extends Controller
             $result = $this->db_select($sql,$data);
             $this->msg['field_56'] = $result;
         } catch (Exception $e) {
-            $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();;
+            $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
         }
         return $this->msg['field_56'];
     }
@@ -1035,18 +1053,13 @@ class DeviceApiController extends Controller
 
         $data = [ 'device_imei' => $deviceIMEI, 'sim_serial' => $deviceSerial ];
         $result = $this->db_select($sql,$data);
-        // $this->msg['automotora_train'] = $result;
 
         return $result;
     }
 
 
     public function login(Request $request){
-        //TODO all the below logic will be implemented by Filbert,
-        // TODO for now we test the encryption and decryption of each payload received
-        /**
-         * Decryption logic for the payload start here
-         */
+
         validator([
             'data' => 'required'
         ]);
@@ -1126,7 +1139,7 @@ class DeviceApiController extends Controller
                             $this->msg['field_52'] = '****';
                             $this->msg['otp'] = $this->generate_otp($result[0]->id, $this->msg['field_68']);
                             if (isset($this->msg['version'])) {
-                                $this->update_device_version($params[0]->id, $this->msg['version'], $agent_username);
+                                $this->insertDeviceVersion($params[0]->id, $this->msg['version'], $agent_username);
                             }
                             // Get Station List
                             $this->msg['operator_category'] = $result[0]->operator_category_id; //1=conductor, 2=Inseptor, 3=CargoMaster
@@ -1146,8 +1159,6 @@ class DeviceApiController extends Controller
                             $this->get_zones_list();
                             $this->get_operator_allocation($result[0]->id);
                             $this->get_operator_allocation_seats($result[0]->id);
-                            // getCargoStationList
-                            // $this->getStationListForCargo($result['line_ID'], $params[2]);
                             //Get Train Class
                             $this->get_train_class();
                             //Get Price Table
@@ -1156,7 +1167,7 @@ class DeviceApiController extends Controller
                             $this->get_passenger_category();
                             //Get Zone detail
                             $this->get_zone_details();
-                            //}
+
 
                             //Get Train Detail
                             $this->get_train_details_new();
@@ -1184,8 +1195,7 @@ class DeviceApiController extends Controller
                             if (!empty($divice_properties)) {
 
                                 $this->msg['field_4'] = '0.00';
-                                // $this->msg['field_39']='00';
-                                // $this->msg['field_62']=APP_VERSION;
+
                                 $this->msg['device_id'] = $divice_properties[0]->id;
                                 $this->msg['device_type'] = $divice_properties[0]->device_type;
                                 $this->msg['device_name'] = $divice_properties[0]->device_name;
@@ -1196,31 +1206,19 @@ class DeviceApiController extends Controller
                                 $this->msg['device_station_id'] = $divice_properties[0]->station_id;
                                 $this->msg['device_logoff_time'] = $divice_properties[0]->last_connect;
                                 $this->msg['device_on_off'] = $divice_properties[0]->On_Off;
-                                // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[11]);
                                 $this->msg['station_name'] = $divice_properties[0]->station_name;
-                                // //     // $divice_properties[14] = iconv('utf-8', 'cp1252', $divice_properties[14]);
                                 $this->msg['province'] = "";
                                 $this->msg['station_latitude'] = "";
                                 $this->msg['station_longtude'] = "";
                                 $this->msg['station_distance'] = "";
-                                // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[19]);
-                                // //     // $this->msg['first_Class'] = $value;
-                                //     $this->msg['first_Class'] = $divice_properties[19];
-                                // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[20]);
-                                //     $this->msg['second_Class'] = $divice_properties[20];
-                                // //     // $value = iconv('utf-8', 'cp1252', $divice_properties[21]);
-                                //     $this->msg['third_Class'] = $divice_properties[21];
+
                                 $this->msg['device_ticket_sale_type'] = $divice_properties[0]->allowed_ticket_sale_type;
 
 
                                 $this->msg['balance_vendor_id'] = $divice_properties[0]->balance_vendor_id;
                                 $this->msg['balance_product_id'] = $divice_properties[0]->balance_product_id;
 
-                                //     //if($params[2]=='K')
                                 $this->msg['station_lines'] = $this->get_station_passing_lines();
-                                //     //TO BEDONE AFTER STATION ALLOCATION
-                                //     //$this->msg['station_users']=$this->get_station_device_operators($this->msg['device_station_id']);
-                                //     $this->msg['sahihi'] = $this->get_generated_sahihi($this->msg['field_3'] . $this->msg['field_4'] . $this->msg['field_7'] . $this->msg['field_11'] . $this->msg['field_39'] . $this->msg['field_61']);
                             }
 
                         } else {
@@ -1615,56 +1613,53 @@ class DeviceApiController extends Controller
     private function process_card_topup()
     {
         if (isset($this->msg['tag_id'])) {
-            $card = $this->check_card_existance($this->msg, "A");
+            $card = $this->check_card_existance($this->msg, A_STATUS);
             if (!empty($card)) {
-                if ($card[0]->status == 'A' && $card[0]->validity == 'VALID') {
+                if ($card[0]->status == ACTIVE_STATUS && $card[0]->validity == VALID_STATUS_NAME) {
                     if ($card[0]->card_ownership == 0) //Individual card
                     {
-                        // if($this->msg['category'] != '6'){
                         if (!$this->check_if_the_package_belong_only_to_company($this->msg['field_102'])) {
-                            $this->proccessing_individual_card_topup($card[0]->id);//card_id
+                            $this->proccessing_individual_card_topup($card[0]->id); //card_id
                         } else {
-                            $this->msg['field_39'] = '12';
+                            $this->msg['field_39'] = FIELD_39_12;
                             $this->msg['message'] = 'Transaction not allowed, Wrong package';
                         }
-
-                    } else if ($card[0]->card_ownership == 1) //Company card
+                    } else if ($card[0]->card_ownership == COMPANY_CARD_INTERGER) //Company card
                     {
                         if ($this->check_if_this_campany_card_package_belong_to_this_company($card[0]->id, $this->msg['field_102'])) {
-                            $this->proccessing_company_card_topup($card[0]->id);//card_id
+                            $this->proccessing_company_card_topup($card[0]->id); //card_id
 
                         } else {
                             $this->msg['field_39'] = '12';
                             $this->msg['message'] = 'Transaction not allowed, Wrong package';
                         }
-
                     }
                 } else {
-                    if ($card[0]->status == "B") {
-                        $this->msg['field_39'] = '14';
+                    if ($card[0]->status == B_STATUS) {
+                        $this->msg['field_39'] = FIELD_39_14;
                         $this->msg['message'] = 'card not blocked';
-                    } else if ($card[0]->status == "I") {
-                        $this->msg['field_39'] = '14';
+                    } else if ($card[0]->status == I_STATUS) {
+                        $this->msg['field_39'] = FIELD_39_14;
                         $this->msg['message'] = 'card not activated blocked';
-                    } else if ($card[0]->status == "S") {
-                        $this->msg['field_39'] = '43';
+                    } else if ($card[0]->status == S_STATUS) {
+                        $this->msg['field_39'] = FIELD_39_43;
                         $this->msg['message'] = 'card stolen pickup';
-                    } else if ($card[0]->status == "L") {
-                        $this->msg['field_39'] = '41';
-                        $this->msg['message'] = 'Lost';
-                    } else if ($card[0]->validity !== 'VALID') {
-                        $this->msg['field_39'] = '54';
-                        $this->msg['message'] = 'Expired card';
+                    } else if ($card[0]->status == L_STATUS) {
+                        $this->msg['field_39'] = FIELD_39_41;
+                        $this->msg['message'] = LOST_STATUS;
+                    } else if ($card[0]->validity !== VALID_STATUS_NAME) {
+                        $this->msg['field_39'] = FIELD_39_54;
+                        $this->msg['message'] = EXPIRED_CARD;
                     }
                 }
             } else {
-                $this->msg['field_39'] = '14';
-                $this->msg['message'] = 'Card does not exist';
+                $this->msg['field_39'] = FIELD_39_14;
+                $this->msg['message'] = CARD_DOES_NOT_EXIST;
                 unset($this->msg['tag_id']);
             }
         } else {
-            $this->msg['field_39'] = '30';
-            $this->msg['message'] = 'Card Tag Not sent';
+            $this->msg['field_39'] = FIELD_39_30;
+            $this->msg['message'] = CARD_TAG_NOT_SENT;
             unset($this->msg['tag_id']);
         }
         unset($this->msg['seat']);
@@ -1674,9 +1669,8 @@ class DeviceApiController extends Controller
         unset($this->msg['longitude']);
         unset($this->msg['latitude']);
         unset($this->msg['field_69']);
-        //$smsSender =new SMSService();//258843206295
-        //$smsSender->send_sms("843206295",$this->msg['message']);
     }
+
 
     public function proccessing_company_card_topup($cardId)
     {
@@ -1695,14 +1689,7 @@ class DeviceApiController extends Controller
             $oldPackageType = $this->msg['field_102'];
             $newPackageType = $this->msg['field_102'];
             $newPackageRules = $this->get_package_details($newPackageType);
-            // `txt_package_code`,
-            // `int_package_validity_type`,
-            // `int_package_usage_type`,
-            // `int_package_trip`,
-            // `dec_package_discount_percent`,
-            // `int_min_balance`,
-            // `id`,
-            // `dec_package_amount`
+
             $dateValidity = $newPackageRules[0]->package_validity_type;
             $tripNumber = $newPackageRules[0]->package_trip;
             $dateValidity = $this->msg['quantity'] * $dateValidity;
@@ -1751,10 +1738,7 @@ class DeviceApiController extends Controller
             }
         } else {
             $this->msg['test3'] = 'test3';
-            //Package tried to be charge does not exit
-            //check if its is allowed packages based on registered category and exception
-            //Other customer should not treated as employees, or normal customer should not change category as per card registration
-            //Package Does NOT Exist
+
             $custDetails = $this->get_customer_account_package_details_by_tag($this->msg['tag_id']);
             $output = $this->verify_message_source($this->msg['field_58'], null);
             $operator = $output[0]->id;
@@ -1871,9 +1855,7 @@ class DeviceApiController extends Controller
 
     use ApprovalTrait;
     public function update_descending_operator_collection($msg){
-        // $msg = null;
-        // $this->msg = $request;
-        // $this->msg['MTI'] = "0630";
+
         $params = $this->get_app_parameters($msg['field_68'], $msg['field_69']);
         $operator = $this->verify_message_source($msg['field_58'], null);
         $deviceID = $params[0]->id;
@@ -1951,9 +1933,6 @@ class DeviceApiController extends Controller
         if (empty($response)){
             return $this->error(null, "Something wrong, with initialize approval process, contact admin for more assistance", 500);
         }
-
-
-        // return response()->json($this->msg);
 
     }
 
@@ -2240,9 +2219,9 @@ class DeviceApiController extends Controller
 
             $topupAmount = $this->msg['field_4'];
             $oldPackageType = $this->check_customer_non_company_package_code($this->msg['tag_id'], $this->msg['field_102']);
-            if ($oldPackageType[0]->package_code == "L0Z0N0") {
+            if ($oldPackageType[0]->package_code == L0Z0N0) {
                 //Add New Package Account
-                $accNumber = $this->get_next_account_number('C');
+                $accNumber = $this->get_next_account_number(CUSTOMER_MODE);
                 $accBalance = $this->msg['field_4'];
                 $accStatus = "A";
                 $package = $this->get_package_details($this->msg['field_102']);
@@ -2366,19 +2345,13 @@ class DeviceApiController extends Controller
 		WHERE A.status IN ('A' ,'I') AND `tag_id`=:tag AND `P`.`package_code`=:packageCode  ORDER BY `P`.id DESC LIMIT 1";
         try {
 
-            // $result = $this->db->prepare($sql);
-            // $result->bindParam(":tag", $tagID);
-            // $result->bindParam(":packageCode", $packageCode);
-            // $result->execute();
-            // $result = $result->fetchAll();
-
             $data = [ 'tag' => $tagID,'packageCode' => $packageCode];
             $result = $this->db_select($sql,$data);
 
 
             return $result;
         } catch (Exception $e) {
-            $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();;
+            $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
         }
         return '';
     }
@@ -2414,12 +2387,6 @@ class DeviceApiController extends Controller
 		INNER JOIN `customer_account_package_types` AS `P` ON `A`.`customer_account_package_type`=`P`.`id`
 		WHERE A.status='A'  AND `tag_id`=:tag 	LIMIT 1";
         try {
-
-            // $result = $this->db->prepare($sql);
-            // $result->bindParam(":tag", $tagID);
-            // $result->execute();
-            // $result = $result->fetchAll();
-
             $data = [ 'tag' => $tagID];
             $result = $this->db_select($sql,$data);
 
@@ -2429,7 +2396,7 @@ class DeviceApiController extends Controller
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();;
         }
-        return $result;
+
     }
 
 
@@ -2595,9 +2562,6 @@ class DeviceApiController extends Controller
 
         $sql = "UPDATE `customer_accounts` SET `account_balance` = (`account_balance` + :topupAmount),last_update= CURRENT_TIMESTAMP WHERE id=:accountId";
         try {
-            // $result = $this->db->prepare($sql);
-            // $result->bindParam(":topupAmount", $topupAmount);
-            // $result->bindParam(":accountId", $accountId);
             $data = [ 'topupAmount' => $topupAmount,'accountId' => $accountId];
             $result = $this->db_select($sql,$data);
             if (!empty($result)) {
@@ -2654,12 +2618,7 @@ class DeviceApiController extends Controller
         //$parameters=array('transactionStatus'=>$status,'transactionReceipt'=>$transactiontReceipt,'operatorID'=>$operator);
         $status = true;
         try {
-            // $result = $this->db->prepare($sql);
-            // $result->bindParam(":transactionStatus", $trxStatus);
-            // $result->bindParam(":transactionReceipt", $transactiontReceipt);
-            // $result->bindParam(":operatorID", $operator);
-            // $result->bindParam(":typeCrDr", $typeCrDr);
-            // $result->bindParam(":accountID", $accountID);
+
 
             $data = [ 'transactionStatus' => $trxStatus,'transactionReceipt' => $transactiontReceipt,
                 'operatorID' => $operator , 'typeCrDr' => $typeCrDr, 'accountID' => $accountID ];
@@ -2703,11 +2662,6 @@ class DeviceApiController extends Controller
                 'cardId' => $cardId,
                 'topupAmount' => $topupAmount,
                 'oldPackageType' => $details[0]->id,
-                // 'newPackageType' => $details[0]->package_code,
-                // 'creditDays' => $creditDays,
-                // 'tripNumber' => $tripNumber,
-                // 'packageTripPrice' => $packageTripPrice,
-                // 'replaceDate' => $replaceDate,
                 'max_trips_lpd' => $package[0]->trips_lpd,
                 'max_trips_lpm' => $package[0]->trips_lpm
             ];
@@ -2746,6 +2700,8 @@ class DeviceApiController extends Controller
             }
 
         } catch (Exception $e) {
+            Log::channel('pos')->error(json_encode($this->errorPayload($e)));
+            return false;
         }
         return false;
     }
@@ -2761,9 +2717,6 @@ class DeviceApiController extends Controller
             $diff = abs(strtotime($this->get_credit_end_date_by_day($offset)) - strtotime($date1));
         }
 
-        //       $years = floor($diff / (365*60*60*24));
-        // $months = floor(($diff - $years * 365*60*60*24) / (30*60*60*24));
-        // $days = floor(($diff - $years * 365*60*60*24 - $months*30*60*60*24)/ (60*60*24));
         $days = floor($diff / (60 * 60 * 24));
         return $days;
     }
@@ -2810,7 +2763,7 @@ class DeviceApiController extends Controller
 
         } catch (Exception $e) {
         }
-        return $result;
+
     }
 
     public function insert_incident_detail($operatorID, $deviceID, $msg)
@@ -2944,11 +2897,6 @@ class DeviceApiController extends Controller
             );
 
             $result = $this->db_select($sql,$parameters);
-            // if(empty($result[0])){
-            //     $cardInfo = false;
-            // }else{
-            //     $cardInfo = true;
-            // }
 
 
 
@@ -3060,7 +3008,6 @@ class DeviceApiController extends Controller
 					:idType,:occupation
 					:defaultPin
 				)";
-        // $categoryID = $this->get_customer_category($msg['category']);
         $parameters = array(
             'fullname' => $msg['f_name'] . ' ' . $msg['m_name'] . ' ' . $msg['l_name'],
             'fname' => $msg['f_name'],
@@ -3106,6 +3053,8 @@ class DeviceApiController extends Controller
         }
         catch(Exception $e)
         {
+            Log::error('Failed to link card to customer: ' . $e->getMessage());
+            return false;
 
         }
         return false;
@@ -3116,11 +3065,10 @@ class DeviceApiController extends Controller
         $status = false;
         $sql = "SELECT (MAX(CAST(IFNULL(`account_number`,0) AS UNSIGNED))+1) AS `new_account` FROM `customer_accounts` WHERE `account_number`<>:CFMGL";
         try {
-            $cfmMainGL = "CFMGL";
-
             $parameters = array(
-                'CFMGL' => $cfmMainGL,);
-            $result = $this->db_select($sql,$parameters);
+                'CFMGL' => CFM_MAIN_GL,
+            );
+            $result = $this->db_select($sql, $parameters);
 
 
 
@@ -3128,30 +3076,31 @@ class DeviceApiController extends Controller
                 if ($result[0]->new_account != 0) {
                     return $result[0]->new_account;
                 } else {
-                    if ($accountUsage === 'C') {
-                        return '400000001';
-                    } else if ($accountUsage === 'E') {
-                        return '30000001';
-                    } else if ($accountUsage === 'O') {
-                        return '20000001';
-                    } else if ($accountUsage === 'I') {
-                        return '10000001';
+                    if ($accountUsage === CUSTOMER_MODE) {
+                        return CUSTOMER_MODE_RETURN_CODE;
+                    } else if ($accountUsage === EMPLOYEES_MODE) {
+                        return EMPLOYEES_MODE_RETURN_CODE;
+                    } else if ($accountUsage === OPERATOR_MODE) {
+                        return OPERATOR_MODE_RETURN_CODE;
+                    } else if ($accountUsage === INTERNAL_MODE) {
+                        return INTERNAL_MODE_RETURN_CODE;
                     }
                 }
             } else {
-                if ($accountUsage === 'C') {
-                    return '400000001';
-                } else if ($accountUsage === 'E') {
-                    return '30000001';
-                } else if ($accountUsage === 'O') {
-                    return '20000001';
-                } else if ($accountUsage === 'I') {
-                    return '10000001';
+                if ($accountUsage === CUSTOMER_MODE) {
+                    return CUSTOMER_MODE_RETURN_CODE;
+                } else if ($accountUsage === EMPLOYEES_MODE) {
+                    return EMPLOYEES_MODE_RETURN_CODE;
+                } else if ($accountUsage === OPERATOR_MODE) {
+                    return OPERATOR_MODE_RETURN_CODE;
+                } else if ($accountUsage === INTERNAL_MODE) {
+                    return INTERNAL_MODE_RETURN_CODE;
                 }
-
             }
-            return "0000000001";
-        } catch (Exception $e) {
+            return DEFAULT_MODE_RETURN_CODE;
+        } catch (\Exception $e) {
+            Log::error('Failed to get next account number: ' . $e->getMessage());
+            return false;
         }
         return $status;
     }
@@ -3160,16 +3109,34 @@ class DeviceApiController extends Controller
     public function set_customer_account($customerId, $tag, $operatorId, $accountType)
     {
 
-        $acc = date('d') . time();
-        $accountUsage = 'C';
-        if($accountType != 8){
-            if ($accountType == 6) {
-                $acc = $this->get_next_account_number('E');
-            } else if ($accountType == "O") {
-                $acc = $this->get_next_account_number('O');
-            } else {
-                $acc = $this->get_next_account_number('C');
+        $accountUsage = CUSTOMER_MODE;
+        if ($accountType == 8) {
+            $acc = $this->get_next_account_number(CUSTOMER_MODE);
+            if ($acc == 0) {
+                $acc = time() . date('d');
+            }
 
+            $sql = "INSERT INTO `customer_accounts` ( `account_number`, `card_id`, `customer_id`,  `status`, `linker`,`accounts_usage_type`,`customer_account_package_type`	)
+          VALUES	(:acc, :tag,:cust,'A',:opID,:accountUsage,'19')";
+            $parameters = array(
+                'acc' => $acc,
+                'tag' => $tag,
+                'cust' => $customerId,
+                'opID' => $operatorId,
+                'accountUsage' => $accountUsage,
+            );
+            $result = $this->db_insert($sql, $parameters);
+            $status = $result;
+            if (empty($status)) {
+                $status = false;
+            }
+        } else {
+            if ($accountType == 6) {
+                $acc = $this->get_next_account_number(EMPLOYEES_MODE);
+            } else if ($accountType == OPERATOR_MODE) {
+                $acc = $this->get_next_account_number(OPERATOR_MODE);
+            } else {
+                $acc = $this->get_next_account_number(CUSTOMER_MODE);
             }
 
             if ($acc == 0) {
@@ -3185,28 +3152,7 @@ class DeviceApiController extends Controller
                 'opID' => $operatorId,
                 'accountUsage' => $accountUsage,
             );
-            $result = $this->db_insert($sql,$parameters);
-            $status = $result;
-            if (empty($status)) {
-                $status = false;
-            }
-        }
-        if($accountType == 8){
-            $acc = $this->get_next_account_number('C');
-            if ($acc == 0) {
-                $acc = time() . date('d');
-            }
-
-            $sql = "INSERT INTO `customer_accounts` ( `account_number`, `card_id`, `customer_id`,  `status`, `linker`,`accounts_usage_type`,`customer_account_package_type`	)
-          VALUES	(:acc, :tag,:cust,'A',:opID,:accountUsage,'19')";
-            $parameters = array(
-                'acc' => $acc,
-                'tag' => $tag,
-                'cust' => $customerId,
-                'opID' => $operatorId,
-                'accountUsage' => $accountUsage,
-            );
-            $result = $this->db_insert($sql,$parameters);
+            $result = $this->db_insert($sql, $parameters);
             $status = $result;
             if (empty($status)) {
                 $status = false;
@@ -3251,7 +3197,7 @@ class DeviceApiController extends Controller
 		LIMIT 1"; //`A`.`customer_account_package_type`=:accountPackageType
         try {
             if (!isset($accountPackageType)) {
-                $accountPackageType = 'L0Z0N0';
+                $accountPackageType = L0Z0N0;
             }
 
 
@@ -3261,13 +3207,12 @@ class DeviceApiController extends Controller
             );
             $result = $this->db_select($sql,$parameters);
 
-
-
             return $result;
 
         } catch (Exception $e) {
+            Log::error(json_encode($this->errorPayload($e)));
         }
-
+        return [];
     }
 
 
@@ -3602,7 +3547,7 @@ class DeviceApiController extends Controller
 		INNER JOIN `card_customers` AS `C` ON `A`.`id`=`C`.`id`
 		INNER JOIN `cards` AS `D` ON `D`.`id`=`A`.`id`
 		INNER JOIN `customer_account_package_types` AS `P` ON `A`.`customer_account_package_type`=`P`.`id`
-		WHERE A.status='A' AND accounts_usage_type IN ('C', 'E', 'X') AND tag_id=:tag_id";
+		WHERE A.status='A' AND accounts_usage_type IN (CUSTOMER_MODE, EMPLOYEES_MODE, 'X') AND tag_id=:tag_id";
 
         $data = ['tag_id' => $tagID];
 
@@ -3682,10 +3627,7 @@ class DeviceApiController extends Controller
                         $msg['fromStop'] = $froStationId[0]->station_id;
                     }
                     //This one is edited to resolve the issue of appedairo
-                    // if ($onoff == 1) {
-                    //     $this->log_tracer(__METHOD__, 'LINE#__' . __LINE__);
-                    //     $onoff = 2;
-                    // }
+
                     //for topup
                     if ($onoff == 0) {
                         if ($this->msg['field_61'] == '9009') {
@@ -3723,9 +3665,7 @@ class DeviceApiController extends Controller
                     }
                 }
             } else {
-                //$msg['fromStop']=$froStationId[0];
-                //$onoff=2;
-                //for topup
+
                 if ($onoff == 0) {
                     if ($this->msg['field_61'] == '9009') {
                         $onoff = 2;
@@ -3875,57 +3815,11 @@ class DeviceApiController extends Controller
             'rate' => $rate,
             'paid_amount' => $paid_amount
         );
-        // $status = $this->execute_query_transaction_post($sql, $parameters);
         try {
             $result = $this->db_insert($sql,$parameters);
             $status = true;
 
             return $status;
-            // $parameters = array(
-            //     'field_7' => $transactionRef,
-            //     'tranxdt' => substr($msg['field_7'], 0, 12),
-            //     'field_11' => $msg['field_11'],
-            //     'amount' => $msg['field_4'],
-            //     'type_' => $type,
-            //     'nature' => $nature,
-            //     'mode' => $mode,
-            //     'acc' => $account,
-            //     'card_' => $card,
-            //     'date_' => $date,
-            //     'device' => $msg['field_68'],
-            //     'operator' => $operator,
-            //     'receipt' => $receipt,
-            //     'source' => $source,
-            //     'train' => $msg['train_id'],
-            //     'class' => $msg['class_id'],
-            //     'seat' => $msg['seat'],
-            //     'long' => $msg['longitude'],
-            //     'lat' => $msg['latitude'],
-            //     'cate' => $msg['category'],
-            //     'net' => $net,
-            //     'zone_' => $msg['zone_id'],
-            //     'qnty' => $msg['quantity'],
-            //     'station1' => $msg['fromStop'],
-            //     'station2' => $msg['toStop'],
-            //     'trnxNo' => $trnxNo,
-            //     'stat' => $status,
-            //     'onoff' => $onoff,
-            //     'penalty' => $msg['penalty'],
-            //     'fine' => $msg['fine_status'],
-            //     'debitAccount' => $this->accountDrId,
-            //     'creditAccount' => $this->accountCrId,
-            //     'extTrnxType' => $msg['field_61'],
-            // );
-
-            // try {
-            //     $this->db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-            //     $result = $this->db->prepare($sql);
-            //     $result->execute($parameters) ;
-            //     if($maxId0<$this->getMaxTransaction() ){
-            //         return true;
-            //     }else{
-            //         return false;
-            //     }
         } catch (PDOException $ex) {
             $this->messageCode = $ex->errorInfo[1];
             $this->sqlErrorMsg = __LINE__ . '-' . $ex->getMessage();
@@ -4008,7 +3902,7 @@ class DeviceApiController extends Controller
     }
 
 
-    public function online_card_transaction(Request $request){
+    public function online_card_transaction(Request $request, $type){
         $request->validate([
             'data' =>'required',
             'key' => 'required'
@@ -4134,11 +4028,7 @@ class DeviceApiController extends Controller
                                                         $this->updateTransactionStatus($operator, $this->msg['field_7'], 05);
                                                     }
 
-                                                    // } else {
-                                                    //     $this->msg['field_39'] = '65';
-                                                    //     $this->msg['message'] = 'Exceed pay limit';
-                                                    //     $this->updateTransactionStatus($operator, $this->msg['field_7'], 65);
-                                                    // }
+
                                                 } else {
                                                     if ($this->messageCode == '1062') {
                                                         $this->msg['field_39'] = '94';
@@ -4195,7 +4085,6 @@ class DeviceApiController extends Controller
                                                     //debit customer account specific package
 
                                                     if ($this->debitCustomerAccountPackage($this->msg, $AutomotoraAccount['card_id'], $intPackageType)) {
-                                                        //$this->updateTransactionStatus($operator, $this->msg['field_7'] , 0);
                                                         $this->updateOtherSystemAccounts($this->accountCrId, (1 * $this->msg['field_4']));
                                                         $this->msg['transaction_number'] = $receiptNumber;
                                                         $this->msg['customer'] = $AutomotoraAccount['mask_card'];
@@ -4235,7 +4124,6 @@ class DeviceApiController extends Controller
                                         $this->msg['field_39'] = '13';
                                         $this->msg['message'] = 'Amount format error, less than Zero, not saved';
                                     } else {
-                                        // $this->debitUserDefAccount($defAccount, $operator, $transactionNumber);$AutomotoraAccount['acc_num'],$AutomotoraAccount['card_number']
 
                                         if ($this->msg['category']=='8') {
                                             // code...
@@ -4249,14 +4137,10 @@ class DeviceApiController extends Controller
                                     }
 
                                 } else {
-                                    // $this->msg['auto']=$AutomotoraAccount['account_number'];
-                                    //     $this->msg['auto2']= $AutomotoraAccount['card_number'];
                                     $this->msg['DEFAULT'] = 'DEFAULT';
 //                            customer has only one account (DEFAULT)
 
                                     if ($this->msg['category']=='8') {
-                                        // code...
-                                        // debitUserMTCDefAccount
                                         $this->debitUserMTCDefAccount($defAccount, $operator, $transactionNumber);
 
                                     }else{
@@ -4306,10 +4190,10 @@ class DeviceApiController extends Controller
                 $this->msg['field_39'] = '79';
                 $this->msg['message'] = 'This class not allowed on this train';
             }
-            // $this->msg['tag_id']=Security::encrypt($this->msg['tag_id'], ENC_KEY);
             if (!$isFirstTime) {
                 $responseObject->message = "";
                 $responseObject->response_code = \HttpResponseCode::SUCCESS;
+                $transactions = null;
                 $responseObject->transactions = $transactions;
                 $encryptedResponse = EncryptionHelper::encrypt(json_encode($responseObject), $pwKey);
                 $dataPayload->data = $encryptedResponse;
@@ -4318,7 +4202,6 @@ class DeviceApiController extends Controller
 
         }
         catch (\Throwable $th) {
-            //throw $th;
             Log::error($th->getMessage());
             $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
             $responseObject->message =  $this->exceptionErrorMsg;
@@ -4331,7 +4214,7 @@ class DeviceApiController extends Controller
         }
     }
 
-    public function online_mobile_transaction(Request $request){
+    public function online_mobile_transaction(Request $request, $type){
         $request->validate([
             'data' =>'required',
             'key' => 'required'
@@ -4364,7 +4247,6 @@ class DeviceApiController extends Controller
             $this->msg['quantity'] = "1";
             $this->msg['category'] = "1";
 
-            // $this->msg['tag_id']=Security::decrypt($this->msg['tag_id'], ENC_KEY);
             if ($this->checkTrainClassAvailability($this->msg['train_id'], $this->msg['carriage_class_id'])) {
                 if ($output != null && $output['0']->status == 1) {
 
@@ -4400,12 +4282,7 @@ class DeviceApiController extends Controller
                             }
                         }
                         if (!empty($customerDetails)) {
-                            //                        card is active
-                            // if($this->msg['location_name'] == "automotora"){
-                            //     $type = 3;
-                            // }else{
-                            //     $type = 2; //Debit Customer
-                            // }
+
                             $nature = 2; //Payment
                             $mode = 2; //Card
                             $source = 1;
@@ -4439,8 +4316,6 @@ class DeviceApiController extends Controller
                                     if($customerExtraAccount != null){
 
                                         if ( $customerExtraAccount['cfm_class_id']==$this->msg['class_id']
-                                            // &&                             // $customerExtraAccount['line_id']==$this->msg['line']
-                                            // && $customerExtraAccount['category_ID']==$this->msg['category']
                                             && $customerExtraAccount['zone_id'] >= $this->msg['zone_id'] && $this->msg['location_name'] != "automotora" ) {
                                             $this->msg['Nondefault'] = $defAccount['special_category_id'].'Nondefault'.$this->msg['category'];
                                             $account = $customerExtraAccount['account_number'];
@@ -4459,11 +4334,8 @@ class DeviceApiController extends Controller
                                                     $this->accountDrId = $customerExtraAccount['id'];
                                                     if ($this->recordCustomerTicketBuyTransaction($this->msg, $type, $nature, $mode, $operator, $receiptNumber, $source, $net, $account, $cardNumber, 0, $transactionNumber, $onOff)) //Record  payments
                                                     {
-                                                        // if ($this->checkIfPassengerIsAllowedToRepay($this->msg['tag_id'], $this->msg['train_id'], $customerExtraAccount['id'], $operator)) {
-                                                        //debit customer account specific package
 
                                                         if ($this->debitCustomerAccountPackage($this->msg, $customerExtraAccount['card_id'], $intPackageType)) {
-                                                            //$this->updateTransactionStatus($operator, $this->msg['field_7'] , 0);
                                                             $this->updateOtherSystemAccounts($this->accountCrId, (1 * $this->msg['field_4']));
                                                             $this->msg['transaction_number'] = $receiptNumber;
                                                             $this->msg['customer'] = $customerExtraAccount['mask_card'];
@@ -4479,11 +4351,7 @@ class DeviceApiController extends Controller
                                                             $this->updateTransactionStatus($operator, $this->msg['field_7'], 05);
                                                         }
 
-                                                        // } else {
-                                                        //     $this->msg['field_39'] = '65';
-                                                        //     $this->msg['message'] = 'Exceed pay limit';
-                                                        //     $this->updateTransactionStatus($operator, $this->msg['field_7'], 65);
-                                                        // }
+
                                                     } else {
                                                         if ($this->messageCode == '1062') {
                                                             $this->msg['field_39'] = '94';
@@ -4503,10 +4371,8 @@ class DeviceApiController extends Controller
                                                 $this->msg['field_39'] = '13';
                                                 $this->msg['message'] = 'Amount format error, less than Zero, not saved';
                                             } else {
-                                                // $this->debitUserDefAccount($defAccount, $operator, $transactionNumber);
                                                 if ($this->msg['category']=='8') {
                                                     // code...
-                                                    // debitUserMTCDefAccount
                                                     $this->debitUserMTCDefAccount($defAccount, $operator, $transactionNumber);
 
                                                 }else{
@@ -4540,7 +4406,6 @@ class DeviceApiController extends Controller
                                                         //debit customer account specific package
 
                                                         if ($this->debitCustomerAccountPackage($this->msg, $AutomotoraAccount['card_id'], $intPackageType)) {
-                                                            //$this->updateTransactionStatus($operator, $this->msg['field_7'] , 0);
                                                             $this->updateOtherSystemAccounts($this->accountCrId, (1 * $this->msg['field_4']));
                                                             $this->msg['transaction_number'] = $receiptNumber;
                                                             $this->msg['customer'] = $AutomotoraAccount['mask_card'];
@@ -4580,11 +4445,9 @@ class DeviceApiController extends Controller
                                             $this->msg['field_39'] = '13';
                                             $this->msg['message'] = 'Amount format error, less than Zero, not saved';
                                         } else {
-                                            // $this->debitUserDefAccount($defAccount, $operator, $transactionNumber);$AutomotoraAccount['acc_num'],$AutomotoraAccount['card_number']
 
                                             if ($this->msg['category']=='8') {
                                                 // code...
-                                                // debitUserMTCDefAccount
                                                 $this->debitUserMTCDefAccount($defAccount, $operator, $transactionNumber);
 
                                             }else{
@@ -4594,24 +4457,18 @@ class DeviceApiController extends Controller
                                         }
 
                                     } else {
-                                        // $this->msg['auto']=$AutomotoraAccount['account_number'];
-                                        //     $this->msg['auto2']= $AutomotoraAccount['card_number'];
                                         $this->msg['DEFAULT'] = 'DEFAULT';
                                         $this->msg['status'] = 'success';
                                         $this->msg['message'] = 'Success';
                                         $this->msg['code'] = '200';
                                         $this->msg['data'] = ['message' => "Pagamento efectuado com sucesso"];
-//                            customer has only one account (DEFAULT)
 
                                         if ($this->msg['category']=='8') {
                                             // code...
-                                            // debitUserMTCDefAccount
                                             $this->debitUserMTCDefAccount($defAccount, $operator, $transactionNumber);
 
                                         }else{
-                                            // return $operator;
                                             $this->debitUserDefaultAccount();
-                                            //   $this->debitUserDefAccount($defAccount, $operator, $transactionNumber);
 
                                         }
                                     }
@@ -4678,7 +4535,6 @@ class DeviceApiController extends Controller
 
         }
         catch (\Throwable $th) {
-            //throw $th;
             Log::error($th->getMessage());
             $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
             $responseObject->message =  $this->exceptionErrorMsg;
@@ -4704,18 +4560,6 @@ class DeviceApiController extends Controller
             $totalAmount = $msg['field_4'] + $msg['penalty'];
             $data = [ 'charge'=>$totalAmount, 'accountPackageType'=> $intPackageType,'tagCardId'=> $tagCardId ];
             $result = $this->db_update($sql,$data);
-
-
-            //   $result = $this->db->prepare($sql);
-            //   if (isset($msg['penalty'])) {
-            //       $totalAmount = $msg['field_4'] + $msg['penalty'];
-            //       $result->bindParam(":charge", $totalAmount);
-            //   } else {
-            //       $result->bindParam(":charge", $msg['field_4']);
-            //   }
-            //   $result->bindParam(":tagCardId", $tagCardId);
-            //   $result->bindParam(":accountPackageType", $intPackageType);
-            //   $status = $result->execute();
             return $result;
         } catch (Exception $e) {
             $this->exceptionErrorMsg = __LINE__ . '-' . $e->getMessage();
@@ -4736,11 +4580,7 @@ class DeviceApiController extends Controller
 
             $data = [ 'transactionStatus'=>$trxStatus, 'transactionReceipt'=> $transactionReceipt ];
             $result = $this->db_update($sql,$data);
-            //   $result = $this->db->prepare($sql);
-            //   $result->bindParam(":transactionStatus", $trxStatus);
-            //   $transactionReceipt = $transactionReceipt . '0' . $operator;
-            //   $result->bindParam(":transactionReceipt", $transactionReceipt);
-            //$result->bindParam(":operatorID", $operator);
+
             if ($result) {
                 $status = 1;
             } else {
@@ -4748,7 +4588,6 @@ class DeviceApiController extends Controller
             }
 
         } catch (Exception $e) {
-            //$status= __LINE__.'-'.$e->getMessage();
             return false;
         }
         return $status;
@@ -4759,11 +4598,7 @@ class DeviceApiController extends Controller
 
     public function debitUserDefAccount($defAccount, $operator, $transactionNumber)
     {
-        //        if($this->msg['category'] !=6 || $this->msg['category']!=1){
-        //            $this->msg['field_39'] = '12';
-        //            $this->msg['message'] = 'Verifique a categoria, nort correto!';
-        //
-        //        }else {
+
         $type = 2; //Debit Customer
         $nature = 2; //Payment
         $mode = 2; //Card
@@ -4800,7 +4635,6 @@ class DeviceApiController extends Controller
                 if ($this->recordCustomerTicketBuyTransaction($this->msg, $type, $nature, $mode, $operator, $receiptNumber, $source, $net, $account, $defAccount['card_number'], 0, $transactionNumber, $onOff)) //Record  payments
                 {
 
-                    // if ($this->checkIfPassengerIsAllowedToRepay($defAccount['customer_id'], $this->msg['train_id'], $defAccount['id'], $operator)) {
                     //debit customer account specific package
                     if ($this->debitCustomerAccountPackage($this->msg, $defAccount['card_id'], $intPackageType)) {
                         //$this->updateTransactionStatus($operator, $this->msg['field_7'], 0);
@@ -4817,11 +4651,7 @@ class DeviceApiController extends Controller
                         $this->updateTransactionStatus($operator, $this->msg['field_7'], 05);
                         $this->msg['message'] = 'failed to update';
                     }
-                    // } else {
-                    //     $this->msg['field_39'] = '65';
-                    //     $this->msg['message'] = 'Exceed pay limit';
-                    //     $this->updateTransactionStatus($operator, $this->msg['field_7'], 65);
-                    // }
+
                 } else {
                     if ($this->messageCode == '1062') {
                         $this->msg['field_39'] = '94';
@@ -4842,16 +4672,13 @@ class DeviceApiController extends Controller
             $this->msg['balance'] = number_format($currentPackageBalance, 2, ',', ' ') . ' MT';
             $this->msg['message'] = 'No enough balance';
         }
-//        }
     }
 
     public function updateOtherSystemAccounts($accountId, $topupAmount)
     {
         $sql = "UPDATE `customer_accounts` SET `account_balance` = (`account_balance` + :topupAmount),last_update= CURRENT_TIMESTAMP WHERE id=:accountId";
         try {
-            // $result = $this->db->prepare($sql);
-            // $result->bindParam(":topupAmount", $topupAmount);
-            // $result->bindParam(":accountId", $accountId);
+
             $data = [ 'topupAmount'=>$topupAmount, 'accountId'=> $accountId ];
             $result = $this->db_update($sql,$data);
             if ($result) {
@@ -4888,7 +4715,6 @@ class DeviceApiController extends Controller
             $operator = $output[0]->id;
             $operatorName = $output[0]->full_name;
 
-            //$onoff = $this->get_on_off_source($operator);
             $onoff = null;
             if (isset($this->msg['operator_location'])) {
                 $onoff = $this->msg['operator_location'];
@@ -4926,7 +4752,6 @@ class DeviceApiController extends Controller
             if ($operator != null) {
                 $receiptNumber = $this->generate_daily_receipt();
                 $this->msg['field_37'] = $receiptNumber;
-                //$this->add_seat_class($this->msg,$operator);
                 if ($receiptNumber != null) {
                     //Record Payment
                     //$this->msg['field_39']='00';
@@ -4960,16 +4785,12 @@ class DeviceApiController extends Controller
                 {
                     $this->msg['field_39'] = '00';
                     $this->msg['Message'] = 'Success';
-                    // $this->update_other_system_accounts($this->accountDrId, '-' . $this->msg['field_4']);
-                    // $this->update_other_system_accounts($this->accountCrId, $this->msg['field_4']);
 
                 } else {
                     if ($this->msg['messageCode'] == '1062') {
                         $this->msg['field_39'] = '94';
-                        // $this->msg['Message'] = 'Duplicate';
                     } else {
                         $this->msg['field_39'] = '05';
-                        // $this->update_transaction_status($operator, $receiptNumber, 0);
                         $this->msg['Message'] = 'Error';
                     }
                 }
@@ -4988,7 +4809,6 @@ class DeviceApiController extends Controller
 
 
         } catch (\Throwable $th) {
-            //throw $th;
             Log::error($th->getMessage());
             $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
             $responseObject->message =  $this->exceptionErrorMsg;
@@ -5045,7 +4865,6 @@ class DeviceApiController extends Controller
             $dataPayload->data = $encryptedResponse;
             return response()->json($dataPayload);
         } catch (\Throwable $th) {
-            //throw $th;
             Log::error($th->getMessage());
             $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
             $responseObject->message =  $this->exceptionErrorMsg;
@@ -5085,7 +4904,6 @@ class DeviceApiController extends Controller
                 $operator = $output[0]->id;
                 $operatorName = $output[0]->full_name;
 
-                //$onoff = $this->get_on_off_source($operator);
                 $onoff = null;
                 if (isset($this->msg[$key]['operator_location'])) {
                     $onoff = $this->msg[$key]['operator_location'];
@@ -5123,10 +4941,8 @@ class DeviceApiController extends Controller
                 if ($operator != null) {
                     $receiptNumber = $this->generate_daily_receipt();
                     $this->msg[$key]['field_37'] = $receiptNumber;
-                    //$this->add_seat_class($this->msg[$key],$operator);
                     if ($receiptNumber != null) {
                         //Record Payment
-                        //$this->msg[$key]['field_39']='00';
                         $this->msg[$key]['field_4'] = "$amount";
                     } else {
                         $this->msg[$key]['field_39'] = '96';
@@ -5139,28 +4955,20 @@ class DeviceApiController extends Controller
                 $type = 2;
                 $nature = 2;
                 $mode = 1;
-                // if($this->msg[$key]['location_name'] == "automotora"){
-                //     $type = 3;
-                // }
+
                 if ($this->record_temporary_payment_message($this->msg[$key], $type, $nature, $mode, $operator, $receiptNumber, $source, $net, null, null, 0, $trnx_No, $onoff)) //Record cash payments
                 {
                     $this->msg[$key]['field_39'] = '00';
                     $this->msg[$key]['Message'] = 'Success';
-                    // $this->update_other_system_accounts($this->accountDrId, '-' . $this->msg[$key]['field_4']);
-                    // $this->update_other_system_accounts($this->accountCrId, $this->msg[$key]['field_4']);
 
                 } else {
                     if ($this->msg[$key]['messageCode'] == '1062') {
                         $this->msg[$key]['field_39'] = '94';
-                        // $this->msg[$key]['Message'] = 'Duplicate';
                     } else {
                         $this->msg[$key]['field_39'] = '05';
-                        // $this->update_transaction_status($operator, $receiptNumber, 0);
                         $this->msg[$key]['Message'] = 'Error';
                     }
                 }
-                // }
-
 
             }
             $jsonMessage = json_encode([
@@ -5177,7 +4985,6 @@ class DeviceApiController extends Controller
 
 
         } catch (\Throwable $th) {
-            //throw $th;
             Log::error($th->getMessage());
             $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
             $responseObject->message =  $this->exceptionErrorMsg;
@@ -5263,34 +5070,18 @@ class DeviceApiController extends Controller
         }
 
         if ($direction == 1) { // Asending
-            // if ($postion == 'S') {
             $sql = 'SELECT MIN(`id`) AS `stationID` FROM `train_stations` WHERE `zone_st`=:zoneID';
-            // } else {
-            //     $sql = 'SELECT MAX(`station_ID`) AS `stationID` FROM `tbl_zonal_stops` WHERE `zone_id`=:zoneID';
-            // }
 
-            // $parameters = array('zoneID' => $zoneID);
             $data = [ 'zoneID' => $zoneID];
             $result = $this->db_select($sql,$data);
-            // $result = $this->fetch_query_result($sql, $parameters, false);
-            // if (empty($result)) {
-            //     return 0;
-            // }
+
             return $result[0]->station_ID;
         } else {
-            // if ($postion == 'S') {
             $sql = 'SELECT MAX(`id`) AS `stationID` FROM `train_stations` WHERE `zone_st`=:zoneID';
-            // } else {
-            //     $sql = 'SELECT MIN(`station_ID`) AS `stationID` FROM `tbl_zonal_stops` WHERE `zone_id`=:zoneID';
-            // }
+
             $data = [ 'zoneID' => $zoneID];
             $result = $this->db_select($sql,$data);
-            // $parameters = array('zoneID' => $zoneID);
 
-            // $result = $this->fetch_query_result($sql, $parameters, false);
-            // if (empty($result)) {
-            //     return 0;
-            // }
             return $result[0]->station_ID;
         }
     }
@@ -5382,9 +5173,7 @@ class DeviceApiController extends Controller
                     }
                 }
             } else {
-                //$msg['fromStop']=$froStationId[0];
-                //$onoff=2;
-                //for topup
+
                 if ($onoff == 0) {
                     if ($this->msg['field_61'] == '9009') {
                         $onoff = 2;
@@ -5420,18 +5209,14 @@ class DeviceApiController extends Controller
                     }
                     $this->accountCrId = $this->CFMCAR1;
                 }
-                //$account=$this->accountDrId;
             } else if ($msg['field_61'] == '9008') { //Paymet emplyee ID
                 if (isset($msg['employee_id']) && !empty($msg['employee_id'])) {
                     $this->accountDrId = $this->get_account_type_id($account, "E", null);
-                    //$this->accountCrId=$this->get_account_type_id("CFMGL","I",$this->CFMEMT3);
                     $this->accountCrId = $this->CFMEMP4;
                 } else {
                     $this->accountDrId = $this->get_account_type_id($account, "C", null);
-                    //$this->accountCrId=$this->get_account_type_id("CFMGL","I",$this->CFMEMT3);
                     $this->accountCrId = $this->CFMCAR1;
                 }
-                //$account=$this->accountDrId;
 
             } else if ($msg['field_61'] == '9009') { //Topup
                 if (isset($msg['employee_id']) && !empty($msg['employee_id'])) {
@@ -5440,7 +5225,6 @@ class DeviceApiController extends Controller
                     $this->accountCrId = $this->get_account_type_id($account, "C", null);
                 }
 
-                //$account=$this->accountCrId;
                 $this->accountDrId = $this->get_account_type_id($operator, "O", $this->OPERATOR_TOPUP_ACCOUNT_TYPE);
             }
         }
@@ -5645,64 +5429,54 @@ class DeviceApiController extends Controller
 
         $sql = "SELECT id FROM `customer_accounts` ";
         if (!isset($type)) {
-            if ($mode == "O") {  //Operator
+            if ($mode == OPERATOR_MODE) {  //Operator
                 $sql = $sql . "	WHERE `accounts_usage_type`=:usageType
 				 AND `customer_id`=:accountNumberOrId LIMIT 1";
-            } else if ($mode == "C") { //Customer
+            } else if ($mode == CUSTOMER_MODE) { //Customer
                 $sql = $sql . "	WHERE `accounts_usage_type`=:usageType
 				AND `account_number`=:accountNumberOrId	LIMIT 1";
-            } else if ($mode == "I") { //Internal GL
+            } else if ($mode == INTERNAL_MODE) { //Internal GL
                 $sql = $sql . "	WHERE `accounts_usage_type`=:usageType
 				AND `account_number`=:accountNumberOrId	LIMIT 1";
-            } else if ($mode == "E") { //Employess
+            } else if ($mode == EMPLOYEES_MODE) { //Employess
                 $sql = $sql . "	WHERE `accounts_usage_type`=:usageType
 				AND `account_number`=:accountNumberOrId	LIMIT 1";
-            } else if ($mode == "X") {  //Extenal Organization
+            } else if ($mode == EXTERNAL_ORGANIZATION_MODE) {  //Extenal Organization
                 $sql = $sql . "	WHERE `accounts_usage_type`=:usageType
 				AND `customer_id`=:accountNumberOrId	LIMIT 1";
             }
         } else {
-            if ($mode == "O") {
+            if ($mode == OPERATOR_MODE) {
                 $sql = $sql . "	WHERE `accounts_usage_type`=:usageType
 				AND `customer_id`=:accountNumberOrId AND customer_account_package_type=:accountType LIMIT 1";
-            } else if ($mode == "C") {
+            } else if ($mode == CUSTOMER_MODE) {
                 $sql = $sql . "	WHERE `accounts_usage_type`=:usageType
 				AND `account_number`=:accountNumberOrId AND customer_account_package_type=:accountType	LIMIT 1";
-            } else if ($mode == "I") {
+            } else if ($mode == INTERNAL_MODE) {
                 $sql = $sql . "	WHERE `accounts_usage_type`=:usageType
 				AND `account_number`=:accountNumberOrId AND customer_account_package_type=:accountType	LIMIT 1";
-            } else if ($mode == "E") {
+            } else if ($mode == EMPLOYEES_MODE) {
                 $sql = $sql . "	WHERE `accounts_usage_type`=:usageType
 				AND `account_number`=:accountNumberOrId AND customer_account_package_type=:accountType	LIMIT 1";
-            } else if ($mode == "X") {  //External Organization
+            } else if ($mode == EXTERNAL_ORGANIZATION_MODE) {  //External Organization
                 $sql = $sql . "	WHERE `accounts_usage_type`=:usageType
 				AND `customer_id`=:accountNumberOrId	LIMIT 1";
             }
         }
-        //$this->log_event('get_account_type_id', $sql);
-        //SQLSTATE[42000]: Syntax error or access violation: 1064 You have an error in your
-        //SQL syntax; check the manual that corresponds to your MariaDB server version for
-        //the right syntax to use near ''155544549619'\tLIMIT 1' at line 2"
+
         try {
-            // $result = $this->db->prepare($sql);
-            // $result->bindParam(':usageType', $mode);
-            // $result->bindParam(':accountNumberOrId', $accountOrId);
-            // if (isset($type)) {
-            //     $result->bindParam(':accountType', $type);
-            // }
-            // $result->execute();
-            // $result = $result->fetch();
             if (isset($type)) {
-                $data = [ 'usageType' => $mode, 'accountNumberOrId' => $accountOrId, 'accountType' => $type];
-            }else{
-                $data = [ 'usageType' => $mode, 'accountNumberOrId' => $accountOrId];
+                $data = ['usageType' => $mode, 'accountNumberOrId' => $accountOrId, 'accountType' => $type];
+            } else {
+                $data = ['usageType' => $mode, 'accountNumberOrId' => $accountOrId];
             }
-            $result = $this->db_select($sql,$data);
+            $result = $this->db_select($sql, $data);
             if (!empty($result)) {
                 return $result[0]->id;
             }
             return 0;
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
+            Log::channel('pos')->error(json_encode($this->errorPayload($e)));
         }
         return 0;
     }
@@ -5733,9 +5507,7 @@ class DeviceApiController extends Controller
 
         $data = [ 'device_imei' => $deviceIMEI];
         $result = $this->db_select($sql,$data);
-        // if (empty($result) || !isset($result)) {
-        //     return 0;
-        // }
+
         return $result;
     }
 
@@ -6032,26 +5804,9 @@ class DeviceApiController extends Controller
             $deviceID = $params[0]->id;
             $operatorID = $operator[0]->id;
 
-            // DB::table('device_summary_receipts')->insert([
-            //     'operator_id' => $operatorID,
-            //     'device_imei' => $deviceID
-            //     'train_id' => $train_id,
-            //     'transaction_type_id' => $transaction_type_id,
-            //     'total_tickets' => $total_tickets,
-            //     'total_amount' => $total_amount,
-            //     'summary_date_time' => $summary_date_time,
-            // ]);
-            // $lastInsertId = DB::getPdo()->lastInsertId();
 
-            // $params = $this->get_app_parameters($this->msg['field_68'], $this->msg['field_69']);
-            // $operator = $this->verify_message_source($this->msg['field_58'], null);
-            // $deviceID = $params[0]->id;
-            // $operatorID = $operator[0]->id;
-            // if ($this->insert_incident_detail($operatorID, $deviceID, $this->msg)) {
             $this->msg['field_39'] = '00';
-            // } else {
-            //     $this->msg['field_39'] = '05';
-            // }
+
 
             $responseObject->message = "";
             $responseObject->response_code = \HttpResponseCode::SUCCESS;
@@ -6061,7 +5816,6 @@ class DeviceApiController extends Controller
             return response()->json($dataPayload);
 
         } catch (\Throwable $th) {
-            //throw $th;
             Log::error($th->getMessage());
             $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
             $responseObject->message =  $this->exceptionErrorMsg;
@@ -6086,8 +5840,7 @@ class DeviceApiController extends Controller
         try {
             $operatorCategories = DB::table('tbl_price_table_automotora')->get();
 
-            //   Log::info("operatorCategories data are ");
-            //   Log::info($operatorCategories);
+
             $responseObject->message = "";
             $responseObject->response_code = \HttpResponseCode::SUCCESS;
             $responseObject->operatorCategories = $operatorCategories;
@@ -6095,7 +5848,6 @@ class DeviceApiController extends Controller
             $dataPayload->data = $encryptedResponse;
             return response()->json($dataPayload);
         } catch (\Throwable $th) {
-            //throw $th;
             Log::error($th->getMessage());
             $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
             $responseObject->message =  $this->exceptionErrorMsg;
@@ -6118,8 +5870,7 @@ class DeviceApiController extends Controller
         try {
             $normalprices = DB::table('tbl_price_table')->get();
 
-            //   Log::info("operatorCategories data are ");
-            //   Log::info($operatorCategories);
+
             $responseObject->message = "";
             $responseObject->response_code = \HttpResponseCode::SUCCESS;
             $responseObject->normalprices = $normalprices;
@@ -6127,7 +5878,6 @@ class DeviceApiController extends Controller
             $dataPayload->data = $encryptedResponse;
             return response()->json($dataPayload);
         } catch (\Throwable $th) {
-            //throw $th;
             Log::error($th->getMessage());
             $this->exceptionErrorMsg = __LINE__ . '-' . $th->getMessage();
             $responseObject->message =  $this->exceptionErrorMsg;
