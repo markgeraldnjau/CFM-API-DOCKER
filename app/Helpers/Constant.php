@@ -29,6 +29,8 @@ const USERNAME_AND_PASSWORD_REQUIRED = "Username And Password Is Required";
 // Common Responses
 const LOGIN_SUCCESSFULLY = "Login successfully";
 const SUCCESS_RESPONSE = "Success";
+const WARNING_RESPONSE = "Warning";
+const ERROR_RESPONSE = "Error";
 const DATA_RETRIEVED = "Data retrieved Successfully";
 const DATA_SAVED = "Data saved Successfully";
 const DATA_UPLOADED = "Data upload Successfully";

@@ -43,13 +43,11 @@ Route::group(['middleware'=>'auth:operator','encryption'],function (){
     Route::post('report_incident', '\App\Http\Controllers\Api\Device\DeviceApiController@report_incident');
     Route::post('operator_collection', '\App\Http\Controllers\Api\Device\DeviceApiController@operator_collection');
     Route::post('card_topup', '\App\Http\Controllers\Api\Device\DeviceApiController@card_topup');
-    Route::resource('automotora', 'AutomotoraPriceController');
-    Route::resource('normalprice', 'NormalPriceController');
+//    Route::resource('automotora', 'AutomotoraPriceController');
+//    Route::resource('normalprice', 'NormalPriceController');
     Route::post('authentication', '\App\Http\Controllers\Api\Device\DeviceApiController@authentication');
-    Route::get('ticket_transactions', '\App\Http\Controllers\Api\Device\DeviceApiController@ticket_transactions');
-    Route::get('cargo_transactions', '\App\Http\Controllers\Api\Device\DeviceApiController@cargo_transactions');
-    Route::get('summary_details', '\App\Http\Controllers\Api\Device\DeviceApiController@summary_details');
-    Route::post('allocate_seat', 'Api\Operator\OperatorAllocationController@allocate_seat');
+
+//    Route::post('allocate_seat', 'Api\Operator\OperatorAllocationController@allocate_seat');
     Route::post('train_layout', '\App\Http\Controllers\Api\Device\DeviceApiController@train_layout');
     Route::post('card_transactions', '\App\Http\Controllers\Api\Device\DeviceApiController@card_transactions');
     Route::post('packages', '\App\Http\Controllers\Api\Device\DeviceApiController@packages');

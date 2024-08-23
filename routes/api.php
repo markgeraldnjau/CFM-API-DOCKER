@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Route;
 
 //App Login Apis
 
-Route::post('login', [App\Http\Controllers\Auth\AuthenticatedSessionController::class, 'login']);
+//Route::post('login', [App\Http\Controllers\Api\Auth\AuthenticatedSessionController::class, 'login']);
 
 Route::post('captcha/generate', [\App\Http\Controllers\Api\CaptchaController::class, 'generateCaptcha']);
 Route::post('captcha/validate', [\App\Http\Controllers\Api\CaptchaController::class, 'validateCaptcha']);

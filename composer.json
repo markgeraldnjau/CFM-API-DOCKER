@@ -43,7 +43,8 @@
         "files": [
             "app/Helpers/Constant.php",
             "app/Helpers/Http_Codes.php",
-            "app/Helpers/Common.php"
+            "app/Helpers/Common.php",
+            "app/Helpers/PHC_Constants.php"
         ]
     },
     "scripts": {

@@ -50,6 +50,11 @@ return [
             'provider' => 'customers',
         ],
 
+        'api_user' => [
+            'driver' => 'jwt',
+            'provider' => 'api_users',
+        ],
+
         'operator' => [
             'driver' => 'jwt',
             'provider' => 'operators',
@@ -87,6 +92,11 @@ return [
         'operators' => [
             'driver' => 'eloquent',
             'model' => App\Models\Operator::class,
+        ],
+
+        'api_users' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\ApiUser::class,
         ],
     ],
 

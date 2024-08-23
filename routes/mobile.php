@@ -60,23 +60,22 @@ Route::prefix('mobile')->group(function () {
         Route::get('/services-page', [\App\Http\Controllers\App\News\NewsController::class, 'services']);
 
 
+        Route::get('/test/push/notification', [\App\Http\Controllers\App\FireBase\NotificationController::class, 'sendPushNotification'])->name('test.push.notification');
+
+        Route::get('train_layout', '\App\Http\Controllers\Api\Device\DeviceApiController@train_layout');
+        Route::get('card_transactions', '\App\Http\Controllers\Api\Device\DeviceApiController@card_transactions');
+        Route::get('packages', '\App\Http\Controllers\Api\Device\DeviceApiController@packages');
+
+        Route::post('online_mobile_transaction', '\App\Http\Controllers\Api\Device\DeviceApiController@online_mobile_transaction');
+        Route::post('pin_validation', '\App\Http\Controllers\Api\Device\DeviceApiController@pin_validation');
+
+        Route::get('transfer_verification', '\App\Http\Controllers\Api\Device\DeviceApiController@transfer_verification');
+
+        Route::post('balance_transfer', '\App\Http\Controllers\Api\Device\DeviceApiController@balance_transfer');
+
+        Route::post('customer_registration', '\App\Http\Controllers\Api\Device\DeviceApiController@mobile_customer_registration');
 
     });
-
-    Route::get('/test/push/notification', [\App\Http\Controllers\App\FireBase\NotificationController::class, 'sendPushNotification'])->name('test.push.notification');
-
-    Route::get('train_layout', '\App\Http\Controllers\Api\Device\DeviceApiController@train_layout');
-    Route::get('card_transactions', '\App\Http\Controllers\Api\Device\DeviceApiController@card_transactions');
-    Route::get('packages', '\App\Http\Controllers\Api\Device\DeviceApiController@packages');
-
-    Route::post('online_mobile_transaction', '\App\Http\Controllers\Api\Device\DeviceApiController@online_mobile_transaction');
-    Route::post('pin_validation', '\App\Http\Controllers\Api\Device\DeviceApiController@pin_validation');
-
-    Route::get('transfer_verification', '\App\Http\Controllers\Api\Device\DeviceApiController@transfer_verification');
-
-    Route::post('balance_transfer', '\App\Http\Controllers\Api\Device\DeviceApiController@balance_transfer');
-
-    Route::post('customer_registration', '\App\Http\Controllers\Api\Device\DeviceApiController@mobile_customer_registration');
 
 });
 

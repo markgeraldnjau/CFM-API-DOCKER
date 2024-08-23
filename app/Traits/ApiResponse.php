@@ -25,7 +25,7 @@ trait ApiResponse
         ], $code);
     }
 
-    public function error($data = null, $message = null, $code = 400): \Illuminate\Http\JsonResponse
+    public function error($data = null, $message = null, $code = 500): \Illuminate\Http\JsonResponse
     {
         return response()->json([
             'code' => $code,
