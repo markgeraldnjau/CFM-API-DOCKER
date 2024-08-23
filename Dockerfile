@@ -39,3 +39,15 @@ RUN chown -R www-data:www-data /var/www/html/storage/oauth-public.key
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+
+# Command to run your app in development mode
+# Install npm dependencies
+# RUN npm install
+# Run npm build to build your project (if needed)
+#RUN npm run build
+# --optimize-autoloader --no-dev
+RUN chown -R www-data:www-data /var/www/html/vendor/
+
+
+
+CMD  ["php-fpm", "-F"]
