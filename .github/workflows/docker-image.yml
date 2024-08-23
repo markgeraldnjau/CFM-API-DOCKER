@@ -30,13 +30,13 @@ jobs:
 
       - name: Build Docker image (Laravel)
         run: |
-          docker build --no-cache -t geraldubx/cfm_api:${{ steps.tag.outputs.TIMESTAMP_TAG }} .
+          docker build --no-cache -t filbertnyakunga/cfm_api:${{ steps.tag.outputs.TIMESTAMP_TAG }} .
 
       - name: Build Docker image (Nginx)
         run: |
-          docker build --no-cache -t geraldubx/cfm_api_nginx:${{ steps.tag.outputs.TIMESTAMP_TAG }} ./docker/nginx
+          docker build --no-cache -t filbertnyakunga/cfm_api_nginx:${{ steps.tag.outputs.TIMESTAMP_TAG }} ./docker/nginx
 
       - name: Docker push images
         run: |
-          docker push geraldubx/cfm_api:${{ steps.tag.outputs.TIMESTAMP_TAG }}
-          docker push geraldubx/cfm_api_nginx:${{ steps.tag.outputs.TIMESTAMP_TAG }}
+          docker push filbertnyakunga/cfm_api:${{ steps.tag.outputs.TIMESTAMP_TAG }}
+          docker push filbertnyakunga/cfm_api_nginx:${{ steps.tag.outputs.TIMESTAMP_TAG }}

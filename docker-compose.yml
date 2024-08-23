@@ -27,7 +27,7 @@ services:
             - cfm_api_network
 
     cfm_api_nginx:
-        image: geraldubx/cfm_api_nginx:main
+        image: filbertnyakunga/cfm_api_nginx:main
         container_name: cfm_api_nginx
         volumes:
             - cfm_api_data:/var/www/html
