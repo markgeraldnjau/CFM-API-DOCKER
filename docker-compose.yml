@@ -2,37 +2,47 @@ version: "3"
 
 networks:
     cfm_api_network:
+    # name: html_cfm
+    # driver: bridge
 
 services:
-
     cfm_api:
-        build:
-            context: ./cfm_api
-            dockerfile: Dockerfile
+        image: filbertnyakunga/cfm_api:240823
         environment:
             MYSQL_DATABASE: cfm_db
             MYSQL_USER: root
             MYSQL_PASSWORD: Bcx1234567890.
             MYSQL_ROOT_PASSWORD: Bcx1234567890.
             DB_HOST: localhost
+        # image: cfm_api
         user: www-data
         container_name: cfm_api
         restart: unless-stopped
+        # build:
+        #     context: .
+        #     dockerfile: Dockerfile
         volumes:
             - cfm_api_data:/var/www/html
             - /var/www/html/vendor
+            - /var/www/html/node_modules
         ports:
             - "9001:9000"
+            - "6379:6379"
         networks:
             - cfm_api_network
 
     cfm_api_nginx:
-        image: filbertnyakunga/cfm_api_nginx:main
+        image:  filbertnyakunga/cfm_api_nginx:240823
+        # image: cfm_api_nginx
+        #user: www-data
         container_name: cfm_api_nginx
+        # build:
+        #     context: ./docker/nginx
+        #     dockerfile: Dockerfile
         volumes:
             - cfm_api_data:/var/www/html
         ports:
-            - "8081:80"
+            - "81:80"
         depends_on:
             - cfm_api
         networks:
